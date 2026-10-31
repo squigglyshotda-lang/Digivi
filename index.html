@@ -80,6 +80,13 @@ input[type=text]:focus-visible{outline:2px solid var(--glow);outline-offset:1px}
 .swatch{display:inline-block;width:14px;height:14px;border:2px solid var(--line);vertical-align:middle;background:#000}
 input[type=range]{width:100%;accent-color:var(--glow)}
 label.inline{display:flex;align-items:center;gap:8px;font-size:13px}
+#albumDetail{display:flex;gap:12px;align-items:center;background:var(--bg);border:2px solid var(--line);border-radius:4px;padding:10px}
+#albumDetail img{width:96px;height:96px;image-rendering:pixelated;border:2px solid var(--line);flex:none}
+#albumDetail p{margin:0 0 4px;font-size:13px}
+.album{display:grid;grid-template-columns:repeat(auto-fill,minmax(56px,1fr));gap:8px}
+.album button{padding:0;border:2px solid var(--line);background:var(--bg);border-radius:3px;cursor:pointer;aspect-ratio:1}
+.album button:focus-visible{outline:2px solid var(--glow)}
+.album img{display:block;width:100%;height:100%;image-rendering:pixelated}
 #vid{position:absolute;width:2px;height:2px;opacity:0;pointer-events:none}
 html.standalone body{padding-top:max(10px, env(safe-area-inset-top, 0px));padding-bottom:max(10px, env(safe-area-inset-bottom, 0px))}
 @media (prefers-reduced-motion: reduce){#toast,#cerText{transition:none}}
@@ -111,6 +118,7 @@ html.standalone body{padding-top:max(10px, env(safe-area-inset-top, 0px));paddin
 
   <nav id="tray" aria-label="Prototype tools">
     <button class="btn" data-tab="sensors" aria-pressed="false">Sensors</button>
+    <button class="btn" data-tab="album" aria-pressed="false">Album</button>
     <button class="btn" data-tab="debug" aria-pressed="false">Debug</button>
     <button class="btn" id="soundBtn" aria-pressed="true">Sound on</button>
   </nav>
@@ -121,12 +129,23 @@ html.standalone body{padding-top:max(10px, env(safe-area-inset-top, 0px));paddin
         <h2>Real sensors</h2>
         <div class="row"><div><b>Motion</b><span class="st" id="st-motion">off</span><br><span class="st">Steps and shaking</span></div><button class="btn small" data-en="motion">Enable</button></div>
         <div class="row"><div><b>Microphone</b><span class="st" id="st-mic">off</span><br><span class="st">Noise, voice, singing</span></div><div style="display:flex;gap:8px;align-items:center"><div class="meter" aria-hidden="true"><i id="micMeter"></i></div><button class="btn small" data-en="mic">Enable</button></div></div>
-        <div class="row"><div><b>Camera</b><span class="st" id="st-cam">off</span><br><span class="st">Faces and colours <span class="swatch" id="camSwatch"></span></span></div><button class="btn small" data-en="cam">Enable</button></div>
+        <div class="row"><div><b>Camera</b><span class="st" id="st-cam">off</span><br><span class="st">Show it things <span class="swatch" id="camSwatch"></span></span></div><button class="btn small" data-en="cam">Enable</button></div>
+        <div class="row"><div><b>Which camera</b><br><span class="st">Auto: upright is back, flat is front</span></div><div style="display:flex;gap:6px"><button class="btn small" data-camview="auto" aria-pressed="true">Auto</button><button class="btn small" data-camview="back" aria-pressed="false">Back</button><button class="btn small" data-camview="front" aria-pressed="false">Front</button></div></div>
+        <div class="row"><div><b>Seeing model</b><span class="st" id="st-model">off</span><br><span class="st">Names objects when it is an adult</span></div></div>
         <div class="row"><div><b>Location</b><span class="st" id="st-geo">off</span><br><span class="st">New places</span></div><button class="btn small" data-en="geo">Enable</button></div>
         <div class="row"><div><b>Wi-Fi</b><span class="st bad">not in browsers</span><br><span class="st">The Pixel 2 build will read it</span></div></div>
       </div>
       <p class="note">If a sensor says blocked or no data, this page is running somewhere that does not allow it. Use the Debug tab to trigger the same events by hand. Camera images are never saved or sent anywhere. Visited places are stored on this phone only.</p>
       <p class="mono" id="sensorStats"></p>
+    </div>
+
+    <div class="panel" data-panel="album" hidden>
+      <div id="albumDetail" hidden></div>
+      <div>
+        <h2>Things it has seen</h2>
+        <p class="note" id="albumEmpty">Nothing yet. Enable the camera and hold something up, steady, in front of the back camera.</p>
+        <div class="album" id="albumGrid"></div>
+      </div>
     </div>
 
     <div class="panel" data-panel="debug" hidden>
@@ -139,6 +158,7 @@ html.standalone body{padding-top:max(10px, env(safe-area-inset-top, 0px));paddin
           <button class="btn small" data-ev="sing">Sing to it</button>
           <button class="btn small" data-ev="colour">Show a colour</button>
           <button class="btn small" data-ev="face">It sees your face</button>
+          <button class="btn small" data-ev="show">Show it something</button>
           <button class="btn small" data-ev="place">New place</button>
           <button class="btn small" data-ev="feed">Drop food</button>
         </div>
@@ -238,7 +258,7 @@ function fresh() {
     stage: 'egg', form: null, name: '', taps: 0,
     xp: { exp: 0, cud: 0, che: 0, slp: 0 },
     needs: { hun: 70, aff: 70, ene: 80, cur: 60 },
-    steps: 0, faces: 0, places: [], collection: [], neglectH: 0, last: Date.now()
+    steps: 0, faces: 0, places: [], collection: [], album: [], shows: 0, neglectH: 0, last: Date.now()
   };
 }
 let S;
@@ -253,7 +273,8 @@ const R = { // runtime only
   food: [], parts: [], tint: null, tintT: 0, stepAcc: 0,
   dbgHour: null, dbgNeglect: null, cer: null, mute: false,
   bbox: null, touching: false, strokeLen: 0, moved: 0, last: null, sparkAcc: 0,
-  lookX: 0, namerShown: false, hintKey: ''
+  lookX: 0, namerShown: false, hintKey: '',
+  show: { open: 0, vf: false, steady: 0, lastKeep: -99, flash: 0, freeze: 0, bubble: null, bubbleT: 0, tilt: 0, tiltDir: 1 }, taking: false, curPlace: null
 };
 
 /* ---------------------------------------------------------------- clock/sky */
@@ -586,13 +607,15 @@ function drawPet(stage, form, x, gy, o) {
     px(cx - 5, cy - 7, '#ffffff'); px(cx - 4, cy - 7, '#ffffff');
     faceX = cx + 1; faceY = cy + 1; ryEff = 10; rxEff = 13;
   } else {
-    blobShape(cx, cy, rx + 1, ry + 1, wob, t, OUT, 0);
-    blobShape(cx, cy, rx, ry, wob, t, col, 0);
+    const shr = R.show.tilt > 0 ? R.show.tiltDir * 7 * Math.min(1, R.show.tilt) : 0;
+    blobShape(cx, cy, rx + 1, ry + 1, wob, t, OUT, shr);
+    blobShape(cx, cy, rx, ry, wob, t, col, shr);
     blobShape(cx, cy + Math.round(ry * 0.35), Math.round(rx * 0.62), Math.round(ry * 0.5), wob, t, belly, 0);
     px(cx - Math.round(rx * 0.5), cy - Math.round(ry * 0.55), mix(col, '#ffffff', 0.7));
     px(cx - Math.round(rx * 0.5) + 1, cy - Math.round(ry * 0.55), mix(col, '#ffffff', 0.7));
     if (form === 'cuddly') for (let a = 0; a < 6.28; a += 0.45) px(cx + (rx + 1) * Math.cos(a), cy + (ry + 1) * Math.sin(a), Math.floor(a / 0.45) % 2 ? mix(col, '#ffffff', 0.5) : OUT);
   }
+  if (R.show.tilt > 0) { faceX += R.show.tiltDir * 2; faceY += 1; }
   drawFace(faceX, faceY, rxEff, ryEff, m, R.sing > 0);
   const markKey = stage === 'adult' ? form : 'plus';
   const markY = faceY + Math.round(ryEff * 0.35);
@@ -697,6 +720,11 @@ function update(dt) {
   R.lookX *= 0.9;
   updateParts(dt);
   for (const fd of R.food) fd.y = Math.min(GROUND + 4, fd.y + 70 * dt);
+  const sh = R.show;
+  for (const k of ['flash', 'freeze', 'bubbleT', 'tilt']) if (sh[k] > 0) sh[k] = Math.max(0, sh[k] - dt);
+  const wantOpen = cam.on && cam.facing === 'environment' && canShow() ? 1 : 0;
+  sh.open += (wantOpen - sh.open) * Math.min(1, dt * 6);
+  if (!wantOpen && sh.open < 0.02) { sh.open = 0; sh.vf = false; }
   micFrame(dt); camFrame(dt);
 
   if (R.cer) {
@@ -724,7 +752,8 @@ function updatePet(dt) {
   if (S.stage === 'egg' || ns === 'away' || ns === 'lost') return;
   if (isSleeping() || ns === 'dormant') { R.act = 'rest'; return; }
   const busy = R.dance > 0 || R.startle > 0;
-  if (R.watch > 0) { P.tx = 54; R.act = 'watch'; R.lookX = 0; }
+  if (R.show.open > 0.5 || R.show.bubbleT > 0) { P.tx = 30; R.act = 'watch'; R.lookX = 1; }
+  else if (R.watch > 0) { P.tx = 54; R.act = 'watch'; R.lookX = 0; }
   else if (!busy) {
     R.actT -= dt;
     const landed = R.food.find(f => f.y >= GROUND + 3);
@@ -773,7 +802,9 @@ function render() {
   } else if (ns === 'lost') {
     ell(54, GROUND + 1, 14, 3, '#7a5a3a'); ell(54, GROUND, 12, 2, '#a07a4a');
   }
+  drawViewfinder();
   drawParts();
+  drawBubble();
 }
 
 /* ----------------------------------------------------------- input (touch) */
@@ -813,10 +844,11 @@ function setStatus(name, text) {
   const el = $('st-' + name); if (!el) return; el.textContent = text;
   el.className = 'st ' + (text === 'on' || text.startsWith('on') ? 'on' : (/blocked|unavailable|no data/.test(text) ? 'bad' : ''));
 }
-const M = { ema: 9.8, lastStep: 0, lastShake: 0, spikes: [], got: false };
+const M = { tilt: 50, ema: 9.8, lastStep: 0, lastShake: 0, spikes: [], got: false };
 function onMotion(e) {
   const a = e.accelerationIncludingGravity; if (!a || a.x == null) return;
-  M.got = true; const mag = Math.hypot(a.x, a.y, a.z); M.ema += (mag - M.ema) * 0.05; const d = mag - M.ema, now = performance.now();
+  M.got = true; const mag = Math.hypot(a.x, a.y, a.z);
+  if (mag > 3) M.tilt += (Math.acos(clamp(Math.abs(a.z) / mag, 0, 1)) * 180 / Math.PI - M.tilt) * 0.1; M.ema += (mag - M.ema) * 0.05; const d = mag - M.ema, now = performance.now();
   if (Math.abs(d) > 16) {
     M.spikes = M.spikes.filter(s => now - s < 900); M.spikes.push(now);
     if (M.spikes.length >= 3 && now - M.lastShake > 1500) { M.lastShake = now; M.spikes = []; onShake(); }
@@ -864,40 +896,272 @@ function micFrame(dt) {
     if (mic.quietFor > 0.7) { if (mic.voiceFor > 0.5 && mic.contour.length >= 5) copyBack(mic.contour.slice()); mic.voiceFor = 0; mic.contour = []; }
   }
 }
-const cam = { on: false, fd: null, t: 0, ft: 0, busy: false, lastCol: null, lastColT: -9, r: 0, g: 0, b: 0, bright: 0 };
-const cc = document.createElement('canvas'); cc.width = cc.height = 12;
-let cctx = null; try { cctx = cc.getContext('2d', { willReadFrequently: true }); } catch (e) {}
-async function enableCam() {
+/* ------------------------------------------------ camera: showing it things */
+const VW = 28, VH = 36; // size of the pixel viewfinder, in canvas pixels
+const ml = { state: 'idle', h: null };
+const cam = { on: false, starting: false, stream: null, facing: 'environment', mode: 'auto', posture: 'up', wantT: 0, t: 0, ft: 0, busy: false, steady: 0, lastSig: null, bright: 0, prev: null, noteT: 0 };
+const mkCanvas = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+const vc = mkCanvas(VW, VH), vcx = vc.getContext('2d', { willReadFrequently: true });   // cropped camera sample
+const vfc = mkCanvas(VW, VH), vfx = vfc.getContext('2d');                                // dithered viewfinder picture
+const kc = mkCanvas(16, 16), kcx = kc.getContext('2d', { willReadFrequently: true });    // keepsake sprite
+kcx.imageSmoothingQuality = 'high';
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+function quant(data, w, h) { // 4 levels per colour channel with ordered dithering: a limited retro palette
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4, th = (BAYER[(y & 3) * 4 + (x & 3)] / 16 - 0.5) * 85;
+    for (let c = 0; c < 3; c++) data[i + c] = Math.round(clamp(data[i + c] + th, 0, 255) / 85) * 85;
+    data[i + 3] = 255;
+  }
+}
+function srcSize(src) { return src.videoWidth ? [src.videoWidth, src.videoHeight] : [src.width, src.height]; }
+function sampleFrom(src) { // crop the middle of a video or canvas to the viewfinder's shape
+  const [w, h] = srcSize(src); if (!w || !h) return null;
+  const ar = VW / VH; let sw, sh, sx, sy;
+  if (w / h > ar) { sh = h; sw = h * ar; sx = (w - sw) / 2; sy = 0; } else { sw = w; sh = w / ar; sx = 0; sy = (h - sh) / 2; }
+  vcx.drawImage(src, sx, sy, sw, sh, 0, 0, VW, VH);
+  return vcx.getImageData(0, 0, VW, VH).data;
+}
+function makeSprite(src) { // a tiny palette-limited picture of what it was shown
+  const [w, h] = srcSize(src), s = Math.min(w, h) * 0.8;
+  kcx.drawImage(src, (w - s) / 2, (h - s) / 2, s, s, 0, 0, 16, 16);
+  const im = kcx.getImageData(0, 0, 16, 16); quant(im.data, 16, 16); kcx.putImageData(im, 0, 0);
+  return kc.toDataURL('image/png');
+}
+function sigOf(raw) { // 4x4 grid of average colours, used to tell one thing from another
+  const s = [];
+  for (let cy = 0; cy < 4; cy++) for (let cx = 0; cx < 4; cx++) {
+    let r = 0, g_ = 0, b = 0, n = 0;
+    for (let y = cy * 9; y < cy * 9 + 9; y++) for (let x = cx * 7; x < cx * 7 + 7; x++) { const i = (y * VW + x) * 4; r += raw[i]; g_ += raw[i + 1]; b += raw[i + 2]; n++; }
+    s.push(r / n, g_ / n, b / n);
+  }
+  return s;
+}
+function colourName(r, g_, b) {
+  const mx = Math.max(r, g_, b), mn = Math.min(r, g_, b), l = (mx + mn) / 510;
+  if (mx - mn < 28) return l > 0.8 ? 'white' : (l < 0.2 ? 'black' : 'grey');
+  const d = mx - mn; let h;
+  if (mx === r) h = ((g_ - b) / d) % 6; else if (mx === g_) h = (b - r) / d + 2; else h = (r - g_) / d + 4;
+  h = (h * 60 + 360) % 360;
+  if (h < 15 || h >= 335) return l > 0.7 ? 'pink' : 'red';
+  if (h < 45) return 'orange'; if (h < 70) return 'yellow'; if (h < 165) return 'green'; if (h < 200) return 'teal';
+  if (h < 255) return 'blue'; if (h < 290) return 'purple'; return 'pink';
+}
+function describe(raw) { // light, colour, pattern and shape of the picture
+  const w = VW, h = VH, n = w * h, gray = new Float32Array(n); let r = 0, g_ = 0, b = 0;
+  for (let i = 0; i < n; i++) { const rr = raw[i * 4], gg = raw[i * 4 + 1], bb = raw[i * 4 + 2]; r += rr; g_ += gg; b += bb; gray[i] = 0.3 * rr + 0.59 * gg + 0.11 * bb; }
+  r /= n; g_ /= n; b /= n;
+  let gx = 0, gy = 0;
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x; gx += Math.abs(gray[i + 1] - gray[i - 1]); gy += Math.abs(gray[i + w] - gray[i - w]); }
+  const edge = (gx + gy) / ((w - 2) * (h - 2)) / 255;
+  let pattern = 'plain';
+  if (edge > 0.16) { const ratio = gx / (gy + 1); pattern = (ratio > 1.8 || ratio < 0.55) ? 'stripes' : 'busy'; }
+  // foreground blob: pixels unlike the picture's border
+  let br = 0, bg = 0, bb2 = 0, bn = 0;
+  const addB = (x, y) => { const i = (y * w + x) * 4; br += raw[i]; bg += raw[i + 1]; bb2 += raw[i + 2]; bn++; };
+  for (let x = 0; x < w; x++) { addB(x, 0); addB(x, h - 1); } for (let y = 1; y < h - 1; y++) { addB(0, y); addB(w - 1, y); }
+  br /= bn; bg /= bn; bb2 /= bn;
+  let x0 = w, x1 = -1, y0 = h, y1 = -1, area = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4;
+    if (Math.abs(raw[i] - br) + Math.abs(raw[i + 1] - bg) + Math.abs(raw[i + 2] - bb2) > 70) { area++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  let shape = 'none';
+  if (area > n * 0.04 && area < n * 0.85) {
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1, fill = area / (bw * bh), aspect = Math.max(bw, bh) / Math.min(bw, bh);
+    shape = aspect > 1.9 ? 'long' : (fill > 0.9 ? 'square' : (fill > 0.68 ? 'round' : 'lumpy'));
+  }
+  return { r, g: g_, b, bright: (r + g_ + b) / 765, colHex: toHex(r, g_, b), colName: colourName(r, g_, b), edge, pattern, shape };
+}
+
+/* Which camera, and the picture it makes */
+function wantedFacing() {
+  if (cam.mode === 'back') return 'environment';
+  if (cam.mode === 'front') return 'user';
+  if (!M.got) return 'environment';
+  if (M.tilt >= 60) cam.posture = 'up'; else if (M.tilt <= 40) cam.posture = 'flat';
+  return cam.posture === 'flat' ? 'user' : 'environment';
+}
+async function startStream(facing) {
+  if (cam.starting) return; cam.starting = true;
   const vid = $('vid');
   try {
-    const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 160, height: 120 }, audio: false });
-    vid.srcObject = st; await vid.play(); cam.on = true;
-    if ('FaceDetector' in window) { try { cam.fd = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 1 }); } catch (e) {} }
-    setStatus('cam', cam.fd ? 'on' : 'on (colours only, no face detection here)');
-  } catch (e) { setStatus('cam', 'blocked'); }
+    const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+    const old = cam.stream; vid.srcObject = st; await vid.play(); cam.stream = st; cam.facing = facing; cam.on = true; cam.prev = null; cam.steady = 0;
+    if (old) old.getTracks().forEach(t => t.stop());
+    setStatus('cam', 'on (' + (facing === 'user' ? 'front, greets faces' : 'back, shows things') + ')');
+  } catch (e) {
+    if (!cam.on) setStatus('cam', 'blocked'); else cam.wantT = -8; // keep the old camera and try again later
+  } finally { cam.starting = false; }
 }
+async function enableCam() {
+  if (cam.on || cam.starting) return;
+  await startStream(wantedFacing());
+  if (cam.on) loadModels();
+}
+function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('script')); document.head.appendChild(s); }); }
+async function loadModels() { // object and face models, served from this site's own ml folder
+  if (ml.state !== 'idle') return; ml.state = 'loading'; setStatus('model', 'loading (about 6 MB)');
+  try {
+    await loadScript('./ml/human.js');
+    const hu = new window.Human.Human({
+      backend: 'webgl', modelBasePath: './ml/models/', debug: false, async: true, warmup: 'none', filter: { enabled: false },
+      face: { enabled: true, detector: { modelPath: 'blazeface.json', maxDetected: 1, minConfidence: 0.5, rotation: false }, mesh: { enabled: false }, iris: { enabled: false }, description: { enabled: false }, emotion: { enabled: false }, antispoof: { enabled: false }, liveness: { enabled: false } },
+      body: { enabled: false }, hand: { enabled: false }, gesture: { enabled: false }, segmentation: { enabled: false },
+      object: { enabled: true, modelPath: 'centernet.json', minConfidence: 0.35, maxDetected: 3 }
+    });
+    await hu.load(); ml.h = hu; ml.state = 'ready'; setStatus('model', 'on');
+  } catch (e) { ml.state = 'failed'; setStatus('model', 'unavailable here'); }
+}
+async function detectObject() {
+  if (ml.state !== 'ready') return null;
+  try {
+    const res = await ml.h.detect($('vid'), { face: { enabled: false } });
+    const o = (res.object || []).filter(x => x.score >= 0.35).sort((a, b) => b.score - a.score)[0];
+    return o ? String(o.label).toLowerCase() : null;
+  } catch (e) { return null; }
+}
+async function detectFace() {
+  const vid = $('vid');
+  if (ml.state === 'ready') { const res = await ml.h.detect(vid, { object: { enabled: false } }); return !!(res.face && res.face.length); }
+  if ('FaceDetector' in window) { if (!cam.fd) cam.fd = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 1 }); return (await cam.fd.detect(vid)).length > 0; }
+  return false;
+}
+const canShow = () => S.stage !== 'egg' && !R.cer && !['away', 'lost'].includes(neglectState());
+
 function camFrame(dt) {
-  if (!cam.on || !cctx) return;
-  const vid = $('vid'); if (vid.readyState < 2) return;
-  cam.t += dt; cam.ft += dt;
-  if (cam.t > 0.3) {
-    cam.t = 0; cctx.drawImage(vid, 0, 0, 12, 12); const d = cctx.getImageData(0, 0, 12, 12).data; let r = 0, gg = 0, b = 0;
-    for (let i = 0; i < d.length; i += 4) { r += d[i]; gg += d[i + 1]; b += d[i + 2]; }
-    const n = d.length / 4; r /= n; gg /= n; b /= n; cam.r = r; cam.g = gg; cam.b = b;
-    const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b); cam.bright = (r + gg + b) / 765; const sat = mx ? (mx - mn) / mx : 0;
-    $('camSwatch').style.background = toHex(r, gg, b);
-    const c = toHex(r, gg, b);
-    if (sat > 0.35 && cam.bright > 0.2 && R.t - cam.lastColT > 4) {
-      const lc = cam.lastCol; const dist = lc ? Math.abs(lc[0] - r) + Math.abs(lc[1] - gg) + Math.abs(lc[2] - b) : 999;
-      if (dist > 90) { cam.lastCol = [r, gg, b]; cam.lastColT = R.t; onColour(c); }
+  if (!cam.on) return;
+  const vid = $('vid');
+  const want = wantedFacing();
+  if (want !== cam.facing && !cam.starting) { cam.wantT += dt; if (cam.wantT > 1.5) { cam.wantT = 0; startStream(want); } } else cam.wantT = Math.min(0, cam.wantT);
+  if (vid.readyState < 2) return;
+  cam.t += dt;
+  if (cam.facing === 'environment') {
+    if (cam.t < 0.08) return;
+    const step = cam.t; cam.t = 0;
+    if (R.show.freeze > 0 || R.taking) return;
+    const raw = sampleFrom(vid); if (!raw) return;
+    const im = vfx.createImageData(VW, VH); im.data.set(raw); quant(im.data, VW, VH); vfx.putImageData(im, 0, 0); R.show.vf = true;
+    const had = !!cam.prev;
+    const n = VW * VH; let sum = 0, diff = 0; const cur = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const l = 0.3 * raw[i * 4] + 0.59 * raw[i * 4 + 1] + 0.11 * raw[i * 4 + 2]; cur[i] = l; sum += l; if (cam.prev) diff += Math.abs(l - cam.prev[i]); }
+    cam.prev = cur; cam.bright = sum / n / 255;
+    if (cam.bright < 0.1) S.needs.ene = clamp(S.needs.ene + 0.005, 0, 100);
+    $('camSwatch').style.background = toHex(sum / n, sum / n, sum / n);
+    const steady = had && diff / n < 6 && cam.bright > 0.1;
+    if (steady) cam.steady += step; else cam.steady = 0;
+    R.show.steady = cam.steady;
+    if (cam.steady > 1.2 && R.t - R.show.lastKeep > 6 && canShow()) {
+      const sig = sigOf(raw), dist = cam.lastSig ? sig.reduce((a, v, i) => a + Math.abs(v - cam.lastSig[i]), 0) : 999;
+      cam.steady = 0;
+      if (dist > 90) { cam.lastSig = sig; R.show.lastKeep = R.t; takeIn(vid, false); }
     }
-    if (cam.bright < 0.1) S.needs.ene = clamp(S.needs.ene + 0.02, 0, 100);
-  }
-  if (cam.ft > 1 && cam.fd && !cam.busy) {
-    cam.ft = 0; cam.busy = true;
-    cam.fd.detect(vid).then(fs => { cam.busy = false; if (fs.length) onFace(); }).catch(() => { cam.busy = false; });
+  } else {
+    R.show.vf = false; R.show.steady = 0; cam.ft += dt;
+    if (cam.ft > 1 && !cam.busy) {
+      cam.ft = 0; cam.busy = true;
+      detectFace().then(f => { cam.busy = false; if (f) onFace(); }).catch(() => { cam.busy = false; });
+    }
   }
 }
+
+/* What the pet makes of it, by life stage */
+const ICONS = {
+  circle: ['..###..', '.#...#.', '#.....#', '#.....#', '#.....#', '.#...#.', '..###..'],
+  square: ['#######', '#.....#', '#.....#', '#.....#', '#.....#', '#.....#', '#######'],
+  line: ['.......', '.......', '#######', '#.....#', '#######', '.......', '.......'],
+  blob: ['.##.##.', '#######', '#######', '.#####.', '#######', '.##.##.', '..###..'],
+  stripes: ['#.#.#.#', '#.#.#.#', '#.#.#.#', '#.#.#.#', '#.#.#.#', '#.#.#.#', '#.#.#.#'],
+  busy: ['#..#..#', '..#.#..', '.#...#.', '#..#..#', '.#...#.', '..#.#..', '#..#..#'],
+  person: ['..###..', '..###..', '...#...', '.#####.', '#..#..#', '..#.#..', '.##.##.'],
+  cat: ['#.....#', '##...##', '#######', '#.#.#.#', '#######', '#..#..#', '.#####.'],
+  dog: ['##...##', '#######', '#.#.#.#', '#######', '..###..', '..#.#..', '..###..'],
+  bird: ['..##...', '.####..', '##.#.##', '...#...', '...##..', '...#...', '..#.#..'],
+  cup: ['.......', '#####..', '#...###', '#...#.#', '#...###', '.###...', '.......'],
+  bottle: ['..###..', '...#...', '..###..', '.#...#.', '.#...#.', '.#...#.', '.#####.'],
+  laptop: ['.#####.', '.#...#.', '.#...#.', '.#####.', '#######', '#.....#', '#######'],
+  phone: ['.#####.', '.#...#.', '.#...#.', '.#...#.', '.#...#.', '.#.#.#.', '.#####.'],
+  book: ['.######', '##....#', '#.###.#', '#.....#', '#.###.#', '#.....#', '#######'],
+  chair: ['.#.....', '.#.....', '.#.....', '.#####.', '.#...#.', '.#...#.', '.#...#.'],
+  plant: ['.#...#.', '..#.#..', '#.###.#', '.#####.', '..###..', '..###..', '.#####.'],
+  apple: ['...#...', '..#.#..', '.#####.', '#######', '#######', '.#####.', '..#.#..'],
+  banana: ['.....##', '....##.', '...##..', '..###..', '.###...', '###....', '##.....'],
+  car: ['.......', '..###..', '.#####.', '#######', '#######', '.#...#.', '.......'],
+  tv: ['#.....#', '.#...#.', '#######', '#.....#', '#.....#', '#.....#', '#######'],
+  qmark: ['.#####.', '#.....#', '.....#.', '...##..', '...#...', '.......', '...#...']
+};
+const QM = ['###', '..#', '.#.', '...', '.#.'];
+const LABEL_ICON = { person: 'person', cat: 'cat', dog: 'dog', bird: 'bird', cup: 'cup', 'wine glass': 'cup', bowl: 'cup', bottle: 'bottle', laptop: 'laptop', keyboard: 'laptop', mouse: 'laptop', 'cell phone': 'phone', remote: 'phone', book: 'book', chair: 'chair', couch: 'chair', bed: 'chair', 'potted plant': 'plant', apple: 'apple', orange: 'apple', banana: 'banana', car: 'car', truck: 'car', bus: 'car', bicycle: 'car', motorcycle: 'car', tv: 'tv' };
+const GUESSES = ['apple', 'banana', 'cup', 'bird', 'plant', 'book', 'cat', 'chair', 'bottle'];
+const GUESS_NAME = { apple: 'an apple', banana: 'a banana', cup: 'a cup', bird: 'a bird', plant: 'a plant', book: 'a book', cat: 'a cat', chair: 'a chair', bottle: 'a bottle' };
+const FAKE_LABELS = ['cup', 'bottle', 'laptop', 'book', 'cat', 'dog', 'apple', 'banana', 'chair', 'person', 'potted plant'];
+const aOrAn = w => (/^[aeiou]/i.test(w) ? 'an ' : 'a ') + w;
+const PLACE_NAMES = ['the upside-down tree', 'the floating door', 'the spiral tower', 'the eye stone', 'the stairs to nowhere', 'the whale cloud'];
+const placeName = i => (i == null || i < 0) ? 'its island' : (i < 6 ? 'near ' + PLACE_NAMES[i] : 'a far-off place');
+
+async function takeIn(src, fake) { // the pet takes in a picture: sprite, album entry and a reaction
+  if (R.taking) return; R.taking = true; R.show.flash = 0.15; R.show.freeze = 4;
+  try {
+    const raw = sampleFrom(src); if (!raw) return;
+    const info = describe(raw), sprite = makeSprite(src);
+    let label = null;
+    if (S.stage === 'adult') label = fake ? (Math.random() < 0.6 ? FAKE_LABELS[Math.floor(Math.random() * FAKE_LABELS.length)] : null) : await detectObject();
+    reactToShow(info, sprite, label);
+  } finally { R.taking = false; R.show.freeze = Math.min(R.show.freeze, 1); }
+}
+function reactToShow(info, sprite, label) {
+  let said = '', mood = 'curious', bubble = null, guessed = false;
+  if (S.stage === 'baby') { // light and colour
+    if (info.bright > 0.72) { said = 'something very bright'; mood = 'dazzled'; R.startle = 0.7; }
+    else if (info.bright < 0.18) { said = 'something dark'; mood = 'calm'; }
+    else { said = aOrAn(info.colName) + ' colour'; mood = 'delighted'; R.excited = 2; R.tint = info.colHex; R.tintT = 5; }
+    bubble = { c: info.colHex };
+  } else if (S.stage === 'child') { // shapes and patterns
+    const key = info.pattern !== 'plain' ? info.pattern : (info.shape !== 'none' ? info.shape : null);
+    if (key) {
+      said = { round: 'something round', square: 'something square', long: 'something long', lumpy: 'something lumpy', stripes: 'something stripy', busy: 'something busy' }[key];
+      R.excited = 1.8; bubble = { icon: { round: 'circle', long: 'line', lumpy: 'blob' }[key] || key };
+    } else guessed = true;
+  } else { // adult: names things
+    if (label) { said = aOrAn(label); mood = 'pleased'; R.excited = 1.8; bubble = { icon: LABEL_ICON[label] || 'qmark' }; }
+    else guessed = true;
+  }
+  if (guessed) {
+    const gk = GUESSES[Math.floor(Math.random() * GUESSES.length)];
+    said = 'maybe ' + GUESS_NAME[gk] + '?'; mood = 'puzzled'; bubble = { icon: gk, q: true };
+    R.show.tilt = 1.6; R.show.tiltDir = Math.random() < 0.5 ? -1 : 1;
+  }
+  R.show.bubble = bubble; R.show.bubbleT = 3.4; R.show.flash = 0.18; R.show.freeze = 1.0; R.wake = 20;
+  S.shows++; S.needs.cur = clamp(S.needs.cur + 10, 0, 100); S.xp.exp += 1;
+  if (S.album.length >= 80) S.album.shift();
+  S.album.push({ id: Date.now() + Math.random(), t: Date.now(), img: sprite, place: R.curPlace, said, mood, stage: S.stage });
+  toast(guessed ? 'It tilts its head. ' + said.charAt(0).toUpperCase() + said.slice(1) : (S.stage === 'adult' ? 'It thinks that is ' + said + '.' : 'It sees ' + said + '.'));
+  sfx(guessed ? 300 : 700, 0.12, 'square', 0.04, guessed ? -60 : 200);
+  save(); if (typeof renderAlbumIfOpen === 'function') renderAlbumIfOpen();
+}
+function drawViewfinder() {
+  const o = R.show.open; if (o < 0.05 || R.cer) return;
+  const x0 = 64, y0 = Math.round(50 + Math.sin(R.t * 1.5) * 1.5);
+  g.globalAlpha = o;
+  rect(x0, y0, 36, 44, INK); rect(x0 + 1, y0 + 1, 34, 42, '#f4ecff'); rect(x0 + 3, y0 + 3, 30, 38, INK);
+  rect(x0 - 1, y0 + 21, 1, 3, '#f4ecff'); rect(x0 - 2, y0 + 22, 1, 1, '#f4ecff');
+  if (R.show.vf) g.drawImage(vfc, x0 + 4, y0 + 4); else rect(x0 + 4, y0 + 4, 28, 36, '#2a2450');
+  if (R.show.flash > 0) { g.globalAlpha = o * Math.min(1, R.show.flash / 0.15); rect(x0 + 4, y0 + 4, 28, 36, '#ffffff'); }
+  g.globalAlpha = o;
+  const sw = Math.round(28 * Math.min(1, R.show.steady / 1.2)); if (sw > 0) rect(x0 + 4, y0 + 41, sw, 1, '#ff9a3c');
+  g.globalAlpha = 1;
+}
+function drawBubble() {
+  const b = R.show.bubble; if (!b || R.show.bubbleT <= 0 || !R.bbox) return;
+  g.globalAlpha = Math.min(1, R.show.bubbleT / 0.4);
+  const bx = clamp(Math.round((R.bbox.x0 + R.bbox.x1) / 2) - 7, 2, W - 17), by = Math.max(2, R.bbox.y0 - 19);
+  rect(bx + 1, by, 13, 15, INK); rect(bx, by + 1, 15, 13, INK); rect(bx + 1, by + 1, 13, 13, '#ffffff');
+  rect(bx + 6, by + 15, 3, 1, INK); rect(bx + 7, by + 16, 1, 1, INK); px(bx + 7, by + 15, '#ffffff');
+  if (b.c) { rect(bx + 4, by + 4, 7, 7, INK); rect(bx + 5, by + 5, 5, 5, b.c); px(bx + 5, by + 5, mix(b.c, '#ffffff', 0.6)); }
+  else bitmap(bx + 4, by + 4, ICONS[b.icon] || ICONS.qmark, INK);
+  if (b.q) bitmap(bx + 11, by + 1, QM, '#ff5a6e');
+  g.globalAlpha = 1;
+}
+
 function enableGeo() {
   if (!navigator.geolocation) { setStatus('geo', 'unavailable'); return; }
   setStatus('geo', 'waiting');
@@ -907,6 +1171,7 @@ function enableGeo() {
       if (p.coords.accuracy && p.coords.accuracy > 150) return;
       const key = Math.round(p.coords.latitude * 1000) + ',' + Math.round(p.coords.longitude * 1000);
       if (!S.places.includes(key)) onNewPlace(key);
+      R.curPlace = S.places.indexOf(key);
     }, () => setStatus('geo', 'blocked'), { maximumAge: 60000, timeout: 30000 });
   } catch (e) { setStatus('geo', 'blocked'); }
 }
@@ -918,7 +1183,36 @@ document.querySelectorAll('[data-en]').forEach(b => b.addEventListener('click', 
   ensureAudio(); const k = b.dataset.en;
   ({ motion: enableMotion, mic: enableMic, cam: enableCam, geo: enableGeo })[k]();
 }));
+document.querySelectorAll('[data-camview]').forEach(b => b.addEventListener('click', () => {
+  cam.mode = b.dataset.camview; cam.wantT = 99;
+  document.querySelectorAll('[data-camview]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+}));
+function fmtWhen(t) { const d = new Date(t); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ', ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }); }
+function renderAlbum() {
+  const grid = $('albumGrid'); grid.textContent = ''; $('albumEmpty').hidden = S.album.length > 0;
+  S.album.slice().reverse().forEach(e => {
+    const b = document.createElement('button'), im = document.createElement('img');
+    b.type = 'button'; b.setAttribute('aria-label', 'Seen ' + fmtWhen(e.t) + ': ' + e.said); im.src = e.img; im.alt = '';
+    b.appendChild(im); b.addEventListener('click', () => showDetail(e)); grid.appendChild(b);
+  });
+}
+function showDetail(e) {
+  const d = $('albumDetail'); d.hidden = false; d.textContent = '';
+  const im = document.createElement('img'); im.src = e.img; im.alt = e.said;
+  const box = document.createElement('div');
+  [[e.said.charAt(0).toUpperCase() + e.said.slice(1), 'font-weight:600'], [fmtWhen(e.t), ''], ['Seen ' + placeName(e.place), ''], ['It felt ' + e.mood, '']].forEach(([t, st]) => { const p = document.createElement('p'); p.textContent = t; if (st) p.style.cssText = st; box.appendChild(p); });
+  d.append(im, box);
+}
+function renderAlbumIfOpen() { const p = document.querySelector('[data-panel="album"]'); if (p && !p.hidden) renderAlbum(); }
+document.querySelector('[data-tab="album"]').addEventListener('click', () => { $('albumDetail').hidden = true; setTimeout(renderAlbumIfOpen, 0); });
+function fakeShow() {
+  const c = mkCanvas(64, 64), x = c.getContext('2d'), h = Math.floor(Math.random() * 360);
+  x.fillStyle = 'hsl(' + h + ',40%,70%)'; x.fillRect(0, 0, 64, 64); x.fillStyle = 'hsl(' + ((h + 150) % 360) + ',70%,45%)';
+  if (Math.random() < 0.5) { x.beginPath(); x.arc(32, 32, 18, 0, 7); x.fill(); } else x.fillRect(16, 12, 32, 40);
+  takeIn(c, true);
+}
 const EV = {
+  show: () => { if (S.stage === 'egg') toast('Hatch it first.'); else fakeShow(); },
   steps100: () => onStep(100), shake: onShake, loud: onLoud,
   sing: () => { R.dance = 1.2; R.wake = 15; setTimeout(() => copyBack([300, 340, 380, 340, 300, 420, 460, 420]), 1100); },
   colour: () => onColour(['#ff5a6e', '#4fc3ff', '#ffd34e', '#9aff9a', '#c49aff', '#ff9a6b'][Math.floor(Math.random() * 6)]),
@@ -987,7 +1281,7 @@ function updateStats() {
   if (!$('sheet').hidden) {
     const n = S.needs;
     $('dbgStats').textContent = 'stage ' + S.stage + (S.form ? ' (' + FORM[S.form] + ')' : '') + ' · mood ' + mood() + ' · neglect ' + neglectState() + ' (' + S.neglectH.toFixed(1) + 'h)\nhunger ' + n.hun.toFixed(0) + ' · affection ' + n.aff.toFixed(0) + ' · energy ' + n.ene.toFixed(0) + ' · curiosity ' + n.cur.toFixed(0) + '\nxp explorer ' + S.xp.exp.toFixed(0) + ' · cuddly ' + S.xp.cud.toFixed(0) + ' · cheeky ' + S.xp.che.toFixed(0) + ' · sleepy ' + S.xp.slp.toFixed(0) + ' (child at ' + CHILD_XP + ', adult at ' + ADULT_XP + ')';
-    $('sensorStats').textContent = 'steps ' + S.steps + ' · places ' + S.places.length + ' · faces seen ' + S.faces + (S.faces >= 5 ? ' (it knows you)' : ' (still learning your face)') + '\nThis prototype cannot tell people apart yet, it only counts sightings.';
+    $('sensorStats').textContent = 'steps ' + S.steps + ' · places ' + S.places.length + ' · faces seen ' + S.faces + (S.faces >= 5 ? ' (it knows you)' : ' (still learning your face)') + '\nThis prototype cannot tell people apart yet, it only counts sightings.\ncamera ' + (cam.on ? cam.facing : 'off') + ' · tilt ' + Math.round(M.tilt) + ' deg · shown ' + S.shows;
     $('micMeter').style.width = Math.round(clamp(mic.lvl * 300, 0, 100)) + '%';
     const h = hourNow(); $('hourLabel').textContent = 'Showing ' + String(Math.floor(h)).padStart(2, '0') + ':' + String(Math.round((h % 1) * 60)).padStart(2, '0');
   }
@@ -1015,7 +1309,7 @@ function updateStats() {
   }
   updateHud();
   requestAnimationFrame(frame);
-  window.__pet = { S: () => S, R, EV, forceStage, hourSet: h => { R.dbgHour = h; } };
+  window.__pet = { S: () => S, R, EV, cam, takeIn, forceStage, hourSet: h => { R.dbgHour = h; } };
 })();
 })();
 </script>
