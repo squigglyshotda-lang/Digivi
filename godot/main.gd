@@ -2617,6 +2617,8 @@ func _physics_process(_dt: float) -> void:
 
 func _draw() -> void:
 	draw_world()
+	if idle:
+		draw_rect(Rect2(0, 0, W, H), Color(0, 0, 0, 0.85))
 	has_bbox = false
 	var ns := neglect_state()
 	if cer != null:
@@ -2633,8 +2635,6 @@ func _draw() -> void:
 	draw_viewfinder()
 	draw_parts()
 	draw_bubble()
-	if idle:
-		draw_rect(Rect2(0, 0, W, H), Color(0, 0, 0, 0.93))
 
 
 # ----------------------------------------------------------------- input

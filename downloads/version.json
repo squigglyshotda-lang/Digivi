@@ -1,1 +1,1 @@
-{"code": 10, "name": "0.6.0", "apk": "digivi-latest.apk", "notes": "Idle mode: pet sleeps and the screen goes dark after 1 minute to save battery"}
+{"code": 11, "name": "0.6.1", "apk": "digivi-latest.apk", "notes": "Idle mode dims only the world; the pet stays at normal brightness"}
