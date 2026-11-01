@@ -9,6 +9,16 @@ const GROUND := 133
 const INK := Color("#1a1330")
 const SAVE_PATH := "user://pet.json"
 const CHILD_XP := 900.0
+const ITEMS := [
+	{"id": "cap", "name": "Cap", "cost": 3, "kind": "hat", "col": Color("#ff7a5a")},
+	{"id": "bow", "name": "Bow", "cost": 3, "kind": "hat", "col": Color("#ff7ac8")},
+	{"id": "party", "name": "Party hat", "cost": 5, "kind": "hat", "col": Color("#7ac8ff")},
+	{"id": "crown", "name": "Crown", "cost": 8, "kind": "hat", "col": Color("#ffd05a")},
+	{"id": "pot", "name": "Flower pot", "cost": 4, "kind": "deco", "col": Color("#ff9ad9")},
+	{"id": "lantern", "name": "Lantern", "cost": 5, "kind": "deco", "col": Color("#ffe28a")},
+	{"id": "flag", "name": "Flag", "cost": 4, "kind": "deco", "col": Color("#8bf0ff")},
+]
+const CARRY := ["places", "owned", "hat", "stars", "diary", "diary_keys", "best_catch", "gen", "album", "collection", "sens"]
 const ADULT_XP := 4000.0
 const FORM := {"exp": "explorer", "cud": "cuddly", "che": "cheeky", "slp": "sleepy"}
 const BODY := {"baby": Color("#8be8c9"), "child": Color("#8be8c9"), "explorer": Color("#7fc8ff"), "cuddly": Color("#ffb3a1"), "cheeky": Color("#e9f06a"), "sleepy": Color("#dcd7ff")}
@@ -222,6 +232,11 @@ var held_food = null
 var ptr_down := false
 var nap := 0.0
 const BOWL_X := 92.0
+var shop_panel: Panel
+var shop_list: VBoxContainer
+var shop_stars_l: Label
+var diary_panel: Panel
+var diary_l: Label
 var game := ""
 var game_t := 0.0
 var game_score := 0
@@ -276,7 +291,7 @@ func fresh() -> Dictionary:
 		"stage": "egg", "name": "", "taps": 0,
 		"xp": {"exp": 0.0, "cud": 0.0, "che": 0.0, "slp": 0.0},
 		"needs": {"hun": 70.0, "aff": 70.0, "ene": 80.0, "cur": 60.0},
-		"steps": 0, "faces": 0, "places": [], "collection": [], "album": [], "shows": 0, "sens": {"motion": true, "mic": false, "cam": false, "geo": false}, "mess": [], "stars": 0, "neglectH": 0.0, "last": Time.get_unix_time_from_system(),
+		"steps": 0, "faces": 0, "places": [], "collection": [], "album": [], "shows": 0, "sens": {"motion": true, "mic": false, "cam": false, "geo": false}, "mess": [], "stars": 0, "owned": [], "hat": "", "diary": [], "diary_keys": [], "born": 0.0, "gen": 1, "trait": "", "neglectH": 0.0, "last": Time.get_unix_time_from_system(),
 	}
 
 
@@ -634,6 +649,7 @@ func draw_world() -> void:
 		px(BOWL_X - 2, GROUND - 1, Color("#ff5a6e"))
 		px(BOWL_X, GROUND - 1, Color("#4fc47e"))
 		px(BOWL_X + 2, GROUND - 1, Color("#ffd05a"))
+	draw_decos()
 	draw_ball()
 	for fd in food:
 		var r := 2 if fd.get("held", false) else 1
@@ -962,6 +978,10 @@ func now() -> float:
 
 func on_step(n: int = 1) -> void:
 	S["steps"] += n
+	if S["steps"] >= 1000 and not S["diary_keys"].has("steps1000"):
+		add_diary("A thousand steps together.", "steps1000")
+	if S["steps"] >= 10000 and not S["diary_keys"].has("steps10000"):
+		add_diary("Ten thousand steps together.", "steps10000")
 	S["xp"]["exp"] += 0.02 * n
 	need("hun", 0.02 * n)
 	wake_from_neglect()
@@ -997,6 +1017,10 @@ func on_loud() -> void:
 
 func on_new_place(key: String) -> void:
 	S["places"].append(key)
+	if S["places"].size() == 1:
+		add_diary("Visited somewhere new for the first time.", "place1")
+	elif S["places"].size() == 5:
+		add_diary("Five new places visited together.", "place5")
 	need("cur", 30)
 	S["xp"]["exp"] += 20.0
 	excited = 3.0
@@ -1027,6 +1051,7 @@ func on_face() -> void:
 		return
 	face_last = n
 	S["faces"] += 1
+	add_diary("It saw a face and looked back.", "face1")
 	watch = 5.0
 	wake = 20.0
 	if S["faces"] >= 5:
@@ -1949,6 +1974,7 @@ func react_to_show(info: Dictionary, sprite: String) -> void:
 	show["freeze"] = 1.0
 	wake = 20.0
 	S["shows"] += 1
+	add_diary("The first thing it looked at was " + said + ".", "firstshow")
 	need("cur", 10)
 	S["xp"]["exp"] += 1.0
 	if S["album"].size() >= 80:
@@ -2093,6 +2119,7 @@ func build_sensor_ui(ui: CanvasLayer) -> void:
 	small_btn("zz", Vector2(68, 2), Vector2(18, 9), 5, tuck_in, ui).flat = true
 	build_update_ui(ui)
 	build_game_ui(ui)
+	build_life_ui(ui)
 	sens_panel = Panel.new()
 	sens_panel.position = Vector2(3, 14)
 	sens_panel.size = Vector2(102, 190)
@@ -2292,6 +2319,10 @@ func end_game() -> void:
 	else:
 		stars = game_score
 	S["stars"] = int(S.get("stars", 0)) + stars
+	add_diary("First game together.", "game1")
+	if kind == "catch" and game_score >= 20:
+		add_diary("Caught %d in the catch game." % game_score, "catch20")
+	refresh_shop()
 	need("cur", 6.0)
 	need("aff", 3.0)
 	S["xp"]["exp"] += 0.5 * game_score
@@ -2459,6 +2490,8 @@ func toggle_panel(p: Panel) -> void:
 	album_detail.visible = false
 	upd_panel.visible = false
 	game_panel.visible = false
+	shop_panel.visible = false
+	diary_panel.visible = false
 	p.visible = not was
 
 
@@ -2517,6 +2550,7 @@ func update_ceremony(dt: float) -> void:
 		get_tree().create_timer(0.12).timeout.connect(func(): sfx(1040, 0.3, "square", 0.05, 200))
 		var nm: String = S["name"] if S["name"] != "" else "It"
 		cer_l.text = nm + (" is growing up." if c["to"] == "child" else " has grown up.")
+		add_diary("%s %s." % [nm, "grew into a child" if c["to"] == "child" else "grew up and became " + str(FORM.get(S.get("form", ""), "grown"))], "grow_%s%d" % [str(c["to"]), int(S.get("gen", 1))])
 		save_state()
 	if c["t"] >= 6.0:
 		cer = null
@@ -2685,6 +2719,8 @@ func tap() -> void:
 
 
 func start_hatch() -> void:
+	S["born"] = Time.get_unix_time_from_system()
+	add_diary("Hatched from its egg.", "hatch%d" % int(S.get("gen", 1)))
 	S["stage"] = "baby"
 	S["taps"] = 0
 	funny = 2.2
@@ -2698,13 +2734,246 @@ func start_hatch() -> void:
 
 
 func new_egg() -> void:
-	var keep: Array = S["places"]
+	var keep := carry_over()
 	S = fresh()
-	S["places"] = keep
+	for k in keep:
+		S[k] = keep[k]
 	namer_shown = false
 	dbg_neglect = ""
 	food.clear()
 	save_state()
+
+
+# ------------------------------------------------------- shop, diary, life
+func item_by_id(id: String) -> Dictionary:
+	for it in ITEMS:
+		if it["id"] == id:
+			return it
+	return {}
+
+
+func build_life_ui(ui: CanvasLayer) -> void:
+	small_btn("room", Vector2(28, 179), Vector2(24, 10), 5, func(): toggle_panel(shop_panel), ui).flat = true
+	small_btn("diary", Vector2(54, 179), Vector2(24, 10), 5, func(): toggle_panel(diary_panel), ui).flat = true
+	shop_panel = Panel.new()
+	shop_panel.position = Vector2(3, 14)
+	shop_panel.size = Vector2(102, 150)
+	shop_panel.visible = false
+	ui.add_child(shop_panel)
+	small_label("Room and wardrobe", Vector2(3, 3), Vector2(96, 8), 6, shop_panel)
+	shop_stars_l = small_label("", Vector2(3, 12), Vector2(96, 8), 5, shop_panel)
+	var sc := ScrollContainer.new()
+	shop_panel.add_child(sc)
+	sc.position = Vector2(3, 22)
+	sc.size = Vector2(96, 124)
+	shop_list = VBoxContainer.new()
+	shop_list.custom_minimum_size = Vector2(92, 0)
+	shop_list.add_theme_constant_override("separation", 2)
+	sc.add_child(shop_list)
+	diary_panel = Panel.new()
+	diary_panel.position = Vector2(3, 14)
+	diary_panel.size = Vector2(102, 150)
+	diary_panel.visible = false
+	ui.add_child(diary_panel)
+	small_label("Diary", Vector2(3, 3), Vector2(96, 8), 6, diary_panel)
+	var dsc := ScrollContainer.new()
+	diary_panel.add_child(dsc)
+	dsc.position = Vector2(3, 14)
+	dsc.size = Vector2(96, 132)
+	diary_l = Label.new()
+	diary_l.add_theme_font_size_override("font_size", 5)
+	diary_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	diary_l.custom_minimum_size = Vector2(90, 0)
+	dsc.add_child(diary_l)
+	refresh_shop()
+	refresh_diary()
+
+
+func refresh_shop() -> void:
+	if shop_list == null:
+		return
+	for c in shop_list.get_children():
+		c.queue_free()
+	shop_stars_l.text = "Stars: %d" % int(S.get("stars", 0))
+	for it in ITEMS:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 2)
+		shop_list.add_child(row)
+		var l := Label.new()
+		l.text = it["name"]
+		l.add_theme_font_size_override("font_size", 5)
+		l.custom_minimum_size = Vector2(46, 10)
+		row.add_child(l)
+		var b := Button.new()
+		b.add_theme_font_size_override("font_size", 5)
+		b.custom_minimum_size = Vector2(42, 10)
+		var id: String = it["id"]
+		var owned: bool = S["owned"].has(id)
+		if not owned:
+			b.text = "Buy %d" % int(it["cost"])
+			b.pressed.connect(func(): buy_item(id))
+		elif it["kind"] == "hat":
+			b.text = "Take off" if S["hat"] == id else "Wear"
+			b.pressed.connect(func(): wear_item(id))
+		else:
+			b.text = "In place"
+			b.disabled = true
+		row.add_child(b)
+
+
+func buy_item(id: String) -> void:
+	var it := item_by_id(id)
+	if it.is_empty() or S["owned"].has(id):
+		return
+	if int(S.get("stars", 0)) < int(it["cost"]):
+		toast("Not enough stars yet. Play to earn more.")
+		return
+	S["stars"] = int(S["stars"]) - int(it["cost"])
+	S["owned"].append(id)
+	if it["kind"] == "hat":
+		S["hat"] = id
+		add_diary("Got its first hat: the %s." % str(it["name"]).to_lower(), "hat1")
+	else:
+		add_diary("Added a %s to the island." % str(it["name"]).to_lower(), "deco_" + id)
+	chirp()
+	happy = 2.0
+	toast("New: " + str(it["name"]))
+	refresh_shop()
+	refresh_game_ui()
+	save_state()
+
+
+func wear_item(id: String) -> void:
+	S["hat"] = "" if S["hat"] == id else id
+	refresh_shop()
+	save_state()
+
+
+func add_diary(text: String, key: String = "") -> void:
+	if key != "":
+		if S["diary_keys"].has(key):
+			return
+		S["diary_keys"].append(key)
+	S["diary"].append({"t": Time.get_unix_time_from_system(), "x": text})
+	while S["diary"].size() > 150:
+		S["diary"].pop_front()
+	refresh_diary()
+
+
+func refresh_diary() -> void:
+	if diary_l == null:
+		return
+	if S["diary"].is_empty():
+		diary_l.text = "Nothing yet. Moments you share will be written here."
+		return
+	var lines: PackedStringArray = []
+	for i in range(S["diary"].size() - 1, -1, -1):
+		var e: Dictionary = S["diary"][i]
+		lines.append("%s  %s" % [Time.get_datetime_string_from_unix_time(int(e["t"])).substr(0, 10), e["x"]])
+	diary_l.text = "\n".join(lines)
+
+
+func draw_hat() -> void:
+	var h: String = S.get("hat", "")
+	if h == "" or not has_bbox or S["stage"] == "egg" or cer != null:
+		return
+	var it := item_by_id(h)
+	if it.is_empty():
+		return
+	var c: Color = it["col"]
+	var cx := roundf(bbox.position.x + bbox.size.x / 2.0)
+	var y := roundf(bbox.position.y)
+	match h:
+		"cap":
+			rect(cx - 5, y - 2, 11, 4, INK)
+			rect(cx - 4, y - 1, 9, 2, c)
+			rect(cx - 5, y + 1, 12, 1, mixc(c, Color.BLACK, 0.3))
+			px(cx, y - 3, Color.WHITE)
+		"bow":
+			disc(cx - 4, y, 3, INK)
+			disc(cx + 4, y, 3, INK)
+			disc(cx - 4, y, 2, c)
+			disc(cx + 4, y, 2, c)
+			disc(cx, y, 1, mixc(c, Color.WHITE, 0.5))
+		"party":
+			for i in 6:
+				rect(cx - i / 2, y - 8 + i, 1 + (i / 2) * 2, 1, c if i % 2 == 0 else mixc(c, Color.WHITE, 0.45))
+			px(cx, y - 9, Color("#fff7a0"))
+		"crown":
+			rect(cx - 5, y - 2, 11, 4, INK)
+			rect(cx - 4, y - 1, 9, 3, c)
+			for i in [-4, 0, 4]:
+				rect(cx + i, y - 4, 1, 2, c)
+			px(cx, y - 1, Color("#ff5a6e"))
+
+
+func draw_decos() -> void:
+	var n := nightness(hour_now())
+	for id in S["owned"]:
+		var it := item_by_id(id)
+		if it.is_empty() or it["kind"] != "deco":
+			continue
+		var c: Color = it["col"]
+		match id:
+			"pot":
+				rect(21, GROUND + 1, 6, 4, Color("#b86a3a"))
+				rect(20, GROUND, 8, 1, Color("#d98a52"))
+				rect(24, GROUND - 5, 1, 5, Color("#4fc47e"))
+				disc(24, GROUND - 6, 2, c)
+				px(24, GROUND - 6, Color("#fff7a0"))
+			"lantern":
+				rect(80, GROUND - 8, 1, 9, Color("#7a6aa6"))
+				rect(78, GROUND - 13, 5, 5, INK)
+				rect(79, GROUND - 12, 3, 3, c)
+				ga = 0.12 + 0.3 * n
+				disc(80, GROUND - 10, 6, c)
+				ga = 1.0
+			"flag":
+				rect(34, GROUND - 12, 1, 13, Color("#e9e0ff"))
+				rect(35, GROUND - 12, 7, 4, c)
+				rect(35, GROUND - 9, 5, 1, mixc(c, Color.BLACK, 0.3))
+
+
+func old_age() -> bool:
+	return S["stage"] == "adult" and float(S.get("born", 0.0)) > 0.0 and (Time.get_unix_time_from_system() - float(S["born"])) / 86400.0 >= 30.0
+
+
+func carry_over() -> Dictionary:
+	var keep := {}
+	for k in CARRY:
+		if S.has(k):
+			var v = S[k]
+			keep[k] = v.duplicate(true) if (v is Array or v is Dictionary) else v
+	return keep
+
+
+func egg_button() -> void:
+	if neglect_state() == "lost":
+		new_egg()
+	else:
+		rebirth()
+
+
+func rebirth() -> void:
+	var nm: String = S["name"] if S["name"] != "" else "It"
+	var days := int((Time.get_unix_time_from_system() - float(S["born"])) / 86400.0)
+	var fm: String = FORM.get(S.get("form", ""), "")
+	add_diary("%s left an egg behind after %d days as a %s pet." % [nm, days, fm])
+	var trait_key := dominant()
+	var gen := int(S.get("gen", 1)) + 1
+	var keep := carry_over()
+	S = fresh()
+	for k in keep:
+		S[k] = keep[k]
+	S["gen"] = gen
+	S["trait"] = trait_key
+	S["xp"][trait_key] = 150.0
+	namer_shown = false
+	food.clear()
+	add_diary("Pet number %d begins, with a bit of the %s in it." % [gen, FORM[trait_key]])
+	toast("A new egg.")
+	save_state()
+	refresh_shop()
 
 
 # ---------------------------------------------------------- sensor play
@@ -2823,6 +3092,8 @@ func announce_weather() -> void:
 	if k == wx_told:
 		return
 	wx_told = k
+	if k == "rain":
+		add_diary("A rainy day together.", "rain1")
 	var msgs := {"rain": "It is raining where you are.", "snow": "It is snowing where you are.", "storm": "There is a storm out there.", "fog": "It is foggy out there."}
 	if msgs.has(k):
 		toast(msgs[k])
@@ -3145,6 +3416,7 @@ func _draw() -> void:
 		ell(54, GROUND, 12, 2, Color("#a07a4a"))
 	if S["stage"] != "egg" and (is_sleeping() or ns == "dormant") and not idle and randf() < 0.01:
 		add_part("z", pet_x + 8, GROUND - 24, 4, -8, 1.8)
+	draw_hat()
 	draw_game()
 	draw_viewfinder()
 	draw_parts()
@@ -3238,7 +3510,7 @@ func build_ui() -> void:
 	new_egg_b.position = Vector2(24, 128)
 	new_egg_b.size = Vector2(60, 12)
 	new_egg_b.visible = false
-	new_egg_b.pressed.connect(new_egg)
+	new_egg_b.pressed.connect(egg_button)
 	ui.add_child(new_egg_b)
 
 	namer = Panel.new()
@@ -3313,6 +3585,8 @@ func build_ui() -> void:
 		["Hour +3", func(): dbg_hour = fposmod((hour_now() if dbg_hour < 0.0 else dbg_hour) + 3.0, 24.0)],
 		["Real clock", func(): dbg_hour = -1.0],
 		["Make mess", func(): make_mess()],
+		["Age +30d", func(): S["born"] = float(S["born"]) - 30.0 * 86400.0],
+		["Stars +10", func(): S["stars"] = int(S.get("stars", 0)) + 10; refresh_shop(); refresh_game_ui()],
 		["Weather", func(): cycle_weather()],
 		["Flip tilt", func(): tilt_flip = not tilt_flip],
 		["Sound", func(): mute = not mute],
@@ -3390,6 +3664,7 @@ func submit_name() -> void:
 	if v == "":
 		return
 	S["name"] = v
+	add_diary("It was named %s." % v, "name%d" % int(S.get("gen", 1)))
 	namer.visible = false
 	name_edit.release_focus()
 	chirp()
@@ -3418,7 +3693,11 @@ func update_hud() -> void:
 	if k2 != hint_key:
 		hint_key = k2
 		hint_l.text = txt
-	new_egg_b.visible = lost
+	var old := old_age()
+	new_egg_b.visible = lost or old
+	new_egg_b.text = "Find a new egg" if lost else "Leave an egg"
+	if old and not lost and not S["diary_keys"].has("old%d" % int(S.get("gen", 1))):
+		add_diary("%s is getting old. It can leave an egg whenever you are ready." % (S["name"] if S["name"] != "" else "It"), "old%d" % int(S.get("gen", 1)))
 	title_l.text = "Egg" if S["stage"] == "egg" else (S["name"] if S["name"] != "" else "New pet")
 
 
