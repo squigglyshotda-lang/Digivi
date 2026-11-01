@@ -218,6 +218,10 @@ var toast_l: Label
 var toast_t := 0.0
 var new_egg_b: Button
 var namer: Panel
+var held_food = null
+var ptr_down := false
+var nap := 0.0
+const BOWL_X := 92.0
 var ui_layer: CanvasLayer
 const IDLE_AFTER := 60.0
 const IDLE_FPS := 3
@@ -238,7 +242,7 @@ func fresh() -> Dictionary:
 		"stage": "egg", "name": "", "taps": 0,
 		"xp": {"exp": 0.0, "cud": 0.0, "che": 0.0, "slp": 0.0},
 		"needs": {"hun": 70.0, "aff": 70.0, "ene": 80.0, "cur": 60.0},
-		"steps": 0, "faces": 0, "places": [], "collection": [], "album": [], "shows": 0, "sens": {"motion": true, "mic": false, "cam": false, "geo": false}, "neglectH": 0.0, "last": Time.get_unix_time_from_system(),
+		"steps": 0, "faces": 0, "places": [], "collection": [], "album": [], "shows": 0, "sens": {"motion": true, "mic": false, "cam": false, "geo": false}, "mess": [], "neglectH": 0.0, "last": Time.get_unix_time_from_system(),
 	}
 
 
@@ -368,6 +372,7 @@ func decay(h: float, away: bool) -> void:
 		n["ene"] = clampf(n["ene"] + 6.0 * h, 0, 100)
 	else:
 		n["ene"] = clampf(n["ene"] + (10.0 if is_sleeping() else -3.0) * h, 0, 100)
+	n["aff"] = clampf(n["aff"] - 1.0 * h * S["mess"].size(), 0, 100)
 	var avg: float = (n["hun"] + n["aff"] + n["cur"]) / 3.0
 	if avg < 30.0:
 		S["neglectH"] += h
@@ -377,7 +382,7 @@ func decay(h: float, away: bool) -> void:
 
 
 func is_sleeping() -> bool:
-	return S["stage"] != "egg" and wake <= 0.0 and (S["needs"]["ene"] < 18.0 or (is_night() and S["needs"]["ene"] < 92.0))
+	return S["stage"] != "egg" and wake <= 0.0 and (nap > 0.0 or S["needs"]["ene"] < 18.0 or (is_night() and S["needs"]["ene"] < 92.0))
 
 
 func neglect_state() -> String:
@@ -580,8 +585,23 @@ func draw_world() -> void:
 		rect(tx - 1, GROUND + 3, 3, 3, gc)
 		px(tx - 1, GROUND + 3, mixc(gc, Color.WHITE, 0.6))
 		rect(tx - 1, GROUND + 5, 3, 1, mixc(gc, Color.BLACK, 0.3))
+	for m in S["mess"]:
+		rect(m - 3, GROUND + 3, 7, 3, INK)
+		rect(m - 2, GROUND + 2, 5, 3, Color("#8a5a2e"))
+		rect(m - 1, GROUND + 1, 3, 2, Color("#a8743c"))
+		px(m, GROUND, Color("#a8743c"))
+		px(m - 1, GROUND + 2, Color("#c99a62"))
+		px(m + 4, GROUND, Color("#cfe8a0"))
+		px(m + 5, GROUND - 1, Color("#cfe8a0"))
+	if S["stage"] != "egg":
+		rect(BOWL_X - 4, GROUND + 1, 9, 3, Color("#c98a4a"))
+		rect(BOWL_X - 5, GROUND, 11, 1, Color("#e8b070"))
+		px(BOWL_X - 2, GROUND - 1, Color("#ff5a6e"))
+		px(BOWL_X, GROUND - 1, Color("#4fc47e"))
+		px(BOWL_X + 2, GROUND - 1, Color("#ffd05a"))
 	for fd in food:
-		disc(fd["x"], roundf(fd["y"]), 1, Color("#ff5a6e"))
+		var r := 2 if fd.get("held", false) else 1
+		disc(fd["x"], roundf(fd["y"]), r, Color("#ff5a6e"))
 		px(fd["x"] + 1, fd["y"] - 2, Color("#4fc47e"))
 	var ci := 0
 	for hx in S["collection"]:
@@ -2014,6 +2034,7 @@ func build_sensor_ui(ui: CanvasLayer) -> void:
 	small_btn("alb", Vector2(24, 2), Vector2(20, 9), 5, func(): toggle_panel(album_panel), ui).flat = true
 	upd_btn = small_btn("upd", Vector2(46, 2), Vector2(20, 9), 5, func(): toggle_panel(upd_panel), ui)
 	upd_btn.flat = true
+	small_btn("zz", Vector2(68, 2), Vector2(18, 9), 5, tuck_in, ui).flat = true
 	build_update_ui(ui)
 	sens_panel = Panel.new()
 	sens_panel.position = Vector2(3, 14)
@@ -2348,15 +2369,78 @@ func spawn_food() -> void:
 	food.append({"x": rnd(20, 88), "y": 0.0})
 
 
-func eat_food() -> void:
-	need("hun", 8)
+func eat_food(amount: float = 8.0, by_hand: bool = false) -> void:
+	need("hun", amount)
 	happy = 2.0
+	if by_hand:
+		wake = 15.0
+		nap = 0.0
+		S["xp"]["cud"] += 0.5
+		need("aff", 2)
+		wake_from_neglect()
 	chirp()
 	for i in 3:
 		add_part("heart", pet_x + rnd(-6, 6), GROUND - 18, rnd(-4, 4), -14, 1.2)
 
 
+func pick_food(p: Vector2):
+	for f in food:
+		if not f.get("held", false) and Vector2(f["x"], f["y"]).distance_to(p) < 8.0:
+			f["held"] = true
+			return f
+	if S["stage"] != "egg" and Vector2(BOWL_X, GROUND).distance_to(p) < 9.0:
+		var nf := {"x": p.x, "y": p.y, "held": true, "snack": true}
+		food.append(nf)
+		return nf
+	return null
+
+
+func drop_food() -> void:
+	var f = held_food
+	held_food = null
+	if f == null:
+		return
+	f["held"] = false
+	if neglect_state() != "lost" and Vector2(f["x"], f["y"]).distance_to(Vector2(pet_x, GROUND - 8.0)) < 15.0:
+		food.erase(f)
+		eat_food(6.0 if f.get("snack", false) else 8.0, true)
+	elif f["y"] < GROUND:
+		f["y"] = maxf(f["y"], 4.0)
+
+
+func try_wipe(p: Vector2) -> void:
+	for m in S["mess"].duplicate():
+		if absf(p.x - m) < 8.0 and absf(p.y - (GROUND + 4.0)) < 10.0:
+			S["mess"].erase(m)
+			burst(m, GROUND + 2, 8, [Color("#fff7a0"), Color("#8bf0ff"), Color("#ffffff")], 28.0)
+			need("aff", 3)
+			S["xp"]["cud"] += 1.0
+			chirp()
+			if S["mess"].is_empty():
+				toast("All clean!")
+			save_state()
+
+
+func make_mess() -> void:
+	if S["mess"].size() < 2 and S["stage"] != "egg":
+		S["mess"].append(clampf(pet_x + rnd(-6, 6), 12.0, 96.0))
+		save_state()
+
+
+func tuck_in() -> void:
+	if S["stage"] == "egg":
+		toast("Nothing to tuck in yet.")
+		return
+	nap = 90.0
+	wake = 0.0
+	toast("Sleep well.")
+	enter_idle()
+
+
 func stroke() -> void:
+	nap = 0.0
+	if S["needs"]["ene"] < 40.0:
+		need("ene", 1.5)
 	need("aff", 2)
 	S["xp"]["cud"] += 1.0
 	happy = 2.5
@@ -2379,6 +2463,7 @@ func tap() -> void:
 			start_hatch()
 		save_state()
 		return
+	nap = 0.0
 	squish = 0.8
 	wake = 15.0
 	happy = 1.2
@@ -2412,6 +2497,11 @@ func new_egg() -> void:
 
 # ------------------------------------------------------------------ loop
 func tick_1s() -> void:
+	if nap > 0.0:
+		nap -= 1.0
+		need("ene", 0.3)
+	if S["stage"] != "egg" and not is_sleeping() and neglect_state() == "ok" and randf() < 1.0 / 9000.0:
+		make_mess()
 	if S["stage"] != "egg":
 		decay(1.0 / 3600.0, false)
 		if is_sleeping():
@@ -2441,7 +2531,7 @@ func update_pet(dt: float) -> void:
 		act_t -= dt
 		var landed = null
 		for f in food:
-			if f["y"] >= GROUND + 3:
+			if f["y"] >= GROUND + 3 and not f.get("held", false):
 				landed = f
 				break
 		if landed != null:
@@ -2492,6 +2582,7 @@ func enter_idle() -> void:
 
 
 func wake_up() -> void:
+	nap = 0.0
 	idle = false
 	idle_t = 0.0
 	wake_guard = Time.get_ticks_msec() + 350
@@ -2579,7 +2670,8 @@ func _process(dt: float) -> void:
 		cam_frame(dt)
 		geo_frame(dt)
 	for fd in food:
-		fd["y"] = minf(GROUND + 4.0, fd["y"] + 70.0 * dt)
+		if not fd.get("held", false):
+			fd["y"] = minf(GROUND + 4.0, fd["y"] + 70.0 * dt)
 	if cer != null:
 		update_ceremony(dt)
 	else:
@@ -2647,19 +2739,31 @@ func _unhandled_input(e: InputEvent) -> void:
 		return
 	if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
 		if e.pressed:
+			ptr_down = true
 			last_p = e.position
 			moved = 0.0
 			stroke_len = 0.0
-			touching = in_box(e.position)
+			held_food = pick_food(e.position)
+			touching = held_food == null and in_box(e.position)
 		else:
-			if touching and moved < 5.0:
+			ptr_down = false
+			if held_food != null:
+				drop_food()
+			elif touching and moved < 5.0:
 				tap()
 			touching = false
-	elif e is InputEventMouseMotion and touching:
+	elif e is InputEventMouseMotion:
+		if held_food != null:
+			held_food["x"] = e.position.x
+			held_food["y"] = e.position.y
+			return
+		if not ptr_down:
+			return
 		var d := (e.position as Vector2).distance_to(last_p)
 		last_p = e.position
 		moved += d
-		if S["stage"] == "egg":
+		try_wipe(e.position)
+		if not touching or S["stage"] == "egg":
 			return
 		if in_box(e.position):
 			stroke_len += d
@@ -2687,7 +2791,7 @@ func build_ui() -> void:
 	var ui := CanvasLayer.new()
 	ui_layer = ui
 	add_child(ui)
-	title_l = make_label(9, 3, 14)
+	title_l = make_label(9, 12, 14)
 	ui.add_child(title_l)
 	toast_l = make_label(6, 17, 22)
 	toast_l.modulate.a = 0.0
@@ -2778,6 +2882,7 @@ func build_ui() -> void:
 		["Auto neglect", func(): dbg_neglect = ""],
 		["Hour +3", func(): dbg_hour = fposmod((hour_now() if dbg_hour < 0.0 else dbg_hour) + 3.0, 24.0)],
 		["Real clock", func(): dbg_hour = -1.0],
+		["Make mess", func(): make_mess()],
 		["Sound", func(): mute = not mute],
 		["Reset all", func(): new_egg()],
 	]
