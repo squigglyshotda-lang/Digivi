@@ -62,6 +62,38 @@ public class Native {
         }
     }
 
+    /** Asks Android for permissions (comma separated short names, e.g. "ACTIVITY_RECOGNITION"). */
+    public static void requestPerms(final Activity activity, final String csv) {
+        activity.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try {
+                    String[] p = csv.split(",");
+                    for (int i = 0; i < p.length; i++) p[i] = "android.permission." + p[i].trim();
+                    activity.requestPermissions(p, 4242);
+                } catch (Throwable t) { }
+            }
+        });
+    }
+
+    public static boolean hasPerm(Activity activity, String name) {
+        try {
+            return activity.checkSelfPermission("android.permission." + name) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** One line describing the background service, for the sensors panel. */
+    public static String diag(Activity activity) {
+        try {
+            android.content.SharedPreferences p = activity.getSharedPreferences("digivi_pending", android.content.Context.MODE_PRIVATE);
+            return "service " + (DigiviService.running ? "running" : "NOT running") + ", counter " + hasStepCounter(activity)
+                    + ", last " + p.getFloat("lastCounter", -1f) + ", waiting steps " + p.getInt("steps", 0);
+        } catch (Throwable t) {
+            return "diag error " + t;
+        }
+    }
+
     /** True if the phone has a hardware step counter and permission to read it. */
     public static boolean hasStepCounter(Activity activity) {
         try {

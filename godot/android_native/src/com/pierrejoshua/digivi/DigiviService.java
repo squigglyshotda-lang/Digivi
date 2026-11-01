@@ -35,6 +35,7 @@ import java.util.Set;
  */
 public class DigiviService extends Service implements SensorEventListener {
     static final String PREFS = "digivi_pending";
+    static volatile boolean running = false;
     private SensorManager sensors;
     private LocationManager locations;
     private float lastCounter = -1f;
@@ -103,6 +104,7 @@ public class DigiviService extends Service implements SensorEventListener {
             stopSelf();
             return START_NOT_STICKY;
         }
+        running = true;
         startSensors(loc, mic, act);
         return START_STICKY;
     }
@@ -212,6 +214,7 @@ public class DigiviService extends Service implements SensorEventListener {
     @Override public void onAccuracyChanged(Sensor s, int a) {}
 
     @Override public void onDestroy() {
+        running = false;
         micRunning = false;
         if (sensors != null) sensors.unregisterListener(this);
         if (locations != null) locations.removeUpdates(locationListener);

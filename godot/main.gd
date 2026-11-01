@@ -153,6 +153,11 @@ var svc_ok := false
 var svc_steps := false
 var svc_cls = null
 var svc_t := 0.0
+var bg_asking := false
+var bg_wait := 0.0
+var bg_poll_t := 0.0
+var diag_t := 0.0
+var diag_text := ""
 var status_labels := {}
 var stats_l: Label
 
@@ -1156,12 +1161,41 @@ func mic_frame(dt: float) -> void:
 
 # ----------------------------------------------------- background service
 func enable_bg() -> void:
-	if svc_ok:
+	if svc_ok or bg_asking:
+		return
+	if not OS.has_feature("android") or not Engine.has_singleton("AndroidRuntime"):
+		set_status("bg", "unavailable here")
+		return
+	svc_cls = JavaClassWrapper.wrap("com.pierrejoshua.digivi.Native")
+	if svc_cls == null:
+		set_status("bg", "unavailable (helper missing)")
+		return
+	var act = Engine.get_singleton("AndroidRuntime").getActivity()
+	if bool(svc_cls.hasPerm(act, "ACTIVITY_RECOGNITION")):
+		start_service()
 		return
 	set_status("bg", "asking")
-	ask_perm("ACTIVITY_RECOGNITION", func(_ok: bool):
-		OS.request_permission("POST_NOTIFICATIONS")
-		start_service())
+	svc_cls.requestPerms(act, "ACTIVITY_RECOGNITION,POST_NOTIFICATIONS")
+	bg_asking = true
+	bg_wait = 0.0
+
+
+func bg_poll(dt: float) -> void:
+	if not bg_asking:
+		return
+	bg_wait += dt
+	bg_poll_t += dt
+	if bg_poll_t < 0.5:
+		return
+	bg_poll_t = 0.0
+	var act = Engine.get_singleton("AndroidRuntime").getActivity()
+	if bool(svc_cls.hasPerm(act, "ACTIVITY_RECOGNITION")):
+		bg_asking = false
+		start_service()
+	elif bg_wait > 45.0:
+		bg_asking = false
+		start_service()
+		set_status("bg", "on, but no Physical activity permission (allow it in Android settings)")
 
 
 func start_service() -> void:
@@ -1860,7 +1894,7 @@ func build_sensor_ui(ui: CanvasLayer) -> void:
 	small_btn("alb", Vector2(24, 2), Vector2(20, 9), 5, func(): toggle_panel(album_panel), ui).flat = true
 	sens_panel = Panel.new()
 	sens_panel.position = Vector2(3, 14)
-	sens_panel.size = Vector2(102, 172)
+	sens_panel.size = Vector2(102, 190)
 	sens_panel.visible = false
 	ui.add_child(sens_panel)
 	var rows := [["motion", "Motion", "steps, shaking", enable_motion], ["mic", "Microphone", "noise, voice", enable_mic], ["cam", "Camera", "show it things", enable_cam], ["geo", "Location", "new places", enable_geo], ["bg", "Background", "steps, places while closed", enable_bg]]
@@ -1881,7 +1915,7 @@ func build_sensor_ui(ui: CanvasLayer) -> void:
 	small_btn("Flip", Vector2(37, y + 28), Vector2(24, 10), 5, func():
 		cam_flip[cam_facing] = not cam_flip[cam_facing]
 		apply_cam_params(), sens_panel)
-	stats_l = small_label("", Vector2(3, y + 46), Vector2(96, 22), 4, sens_panel)
+	stats_l = small_label("", Vector2(3, y + 46), Vector2(96, 36), 4, sens_panel)
 	set_status("motion", "off")
 
 	album_panel = Panel.new()
@@ -1927,7 +1961,11 @@ func toggle_panel(p: Panel) -> void:
 
 func update_stats() -> void:
 	if sens_panel != null and sens_panel.visible:
-		stats_l.text = "steps %d  places %d  faces %d\ncamera %s  tilt %d  shown %d\nmic %.2f" % [S["steps"], S["places"].size(), S["faces"], (cam_facing if cam_on else "off"), int(m_tilt), S["shows"], mic_lvl]
+		stats_l.text = "steps %d  places %d  faces %d\ncamera %s  tilt %d  shown %d\nmic %.2f\n%s" % [S["steps"], S["places"].size(), S["faces"], (cam_facing if cam_on else "off"), int(m_tilt), S["shows"], mic_lvl, diag_text]
+		diag_t += 0.25
+		if diag_t > 2.0 and svc_cls != null and OS.has_feature("android"):
+			diag_t = 0.0
+			diag_text = str(svc_cls.diag(Engine.get_singleton("AndroidRuntime").getActivity()))
 
 
 # ---------------------------------------------------------------- growth
@@ -2184,6 +2222,7 @@ func _process(dt: float) -> void:
 	if want_open == 0.0 and show["open"] < 0.02:
 		show["open"] = 0.0
 		vf_ok = false
+	bg_poll(dt)
 	svc_t += dt
 	if svc_t > 1.0:
 		svc_t = 0.0
