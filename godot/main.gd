@@ -167,7 +167,13 @@ var bg_asking := false
 const UPDATE_URL := "https://squigglyshotda-lang.github.io/Digivi/downloads/version.json"
 const UPDATE_BASE := "https://squigglyshotda-lang.github.io/Digivi/downloads/"
 var upd_panel: Panel
-var upd_btn: Button
+var cog_btn: Button
+var cog_alert := false
+var settings_panel: Panel
+var dev_btn: Button
+var dev_taps := 0
+var sens_box: Control
+var sound_btn: Button
 var upd_status: Label
 var upd_action: Button
 var upd_info := {}
@@ -2112,50 +2118,52 @@ func small_label(text: String, pos: Vector2, size: Vector2, fs: int, parent: Nod
 
 
 func build_sensor_ui(ui: CanvasLayer) -> void:
-	small_btn("sns", Vector2(2, 2), Vector2(20, 9), 5, func(): toggle_panel(sens_panel), ui).flat = true
-	small_btn("alb", Vector2(24, 2), Vector2(20, 9), 5, func(): toggle_panel(album_panel), ui).flat = true
-	upd_btn = small_btn("upd", Vector2(46, 2), Vector2(20, 9), 5, func(): toggle_panel(upd_panel), ui)
-	upd_btn.flat = true
-	small_btn("zz", Vector2(68, 2), Vector2(18, 9), 5, tuck_in, ui).flat = true
 	build_update_ui(ui)
 	build_game_ui(ui)
 	build_life_ui(ui)
 	sens_panel = Panel.new()
-	sens_panel.position = Vector2(3, 14)
-	sens_panel.size = Vector2(102, 190)
+	sens_panel.position = Vector2(3, 34)
+	sens_panel.size = Vector2(102, 132)
 	sens_panel.visible = false
 	ui.add_child(sens_panel)
+	var ssc := ScrollContainer.new()
+	sens_panel.add_child(ssc)
+	ssc.position = Vector2(2, 2)
+	ssc.size = Vector2(98, 114)
+	sens_box = Control.new()
+	sens_box.custom_minimum_size = Vector2(92, 176)
+	ssc.add_child(sens_box)
 	var rows := [["motion", "Motion", "steps, shaking", enable_motion], ["mic", "Microphone", "noise, voice", enable_mic], ["cam", "Camera", "show it things", enable_cam], ["geo", "Location", "new places", enable_geo], ["bg", "Background", "steps, places while closed", enable_bg]]
-	var y := 3.0
+	var y := 1.0
 	for r in rows:
-		small_label(r[1], Vector2(3, y), Vector2(50, 7), 6, sens_panel)
-		status_labels[r[0]] = small_label("off", Vector2(3, y + 7), Vector2(66, 12), 5, sens_panel)
-		small_btn("Enable", Vector2(70, y + 2), Vector2(28, 11), 5, r[3], sens_panel)
+		small_label(r[1], Vector2(1, y), Vector2(50, 7), 6, sens_box)
+		status_labels[r[0]] = small_label("off", Vector2(1, y + 7), Vector2(62, 12), 5, sens_box)
+		small_btn("Enable", Vector2(62, y + 2), Vector2(28, 11), 5, r[3], sens_box)
 		y += 20.0
-	small_label("Camera view", Vector2(3, y), Vector2(60, 7), 6, sens_panel)
-	var vx := 3.0
+	small_label("Camera view", Vector2(1, y), Vector2(60, 7), 6, sens_box)
+	var vx := 1.0
 	for m in ["auto", "back", "front"]:
-		small_btn(m.capitalize(), Vector2(vx, y + 8), Vector2(24, 10), 5, func(): cam_mode = m, sens_panel)
+		small_btn(m.capitalize(), Vector2(vx, y + 8), Vector2(24, 10), 5, func(): cam_mode = m, sens_box)
 		vx += 26.0
-	small_btn("Rotate", Vector2(3, y + 28), Vector2(32, 10), 5, func():
+	small_btn("Rotate", Vector2(1, y + 22), Vector2(32, 10), 5, func():
 		cam_rot[cam_facing] = (cam_rot[cam_facing] + 1) % 4
-		apply_cam_params(), sens_panel)
-	small_btn("Flip", Vector2(37, y + 28), Vector2(24, 10), 5, func():
+		apply_cam_params(), sens_box)
+	small_btn("Flip", Vector2(35, y + 22), Vector2(24, 10), 5, func():
 		cam_flip[cam_facing] = not cam_flip[cam_facing]
-		apply_cam_params(), sens_panel)
-	stats_l = small_label("", Vector2(3, y + 46), Vector2(96, 36), 4, sens_panel)
+		apply_cam_params(), sens_box)
+	stats_l = small_label("", Vector2(1, y + 36), Vector2(90, 40), 4, sens_box)
 	set_status("motion", "off")
 
 	album_panel = Panel.new()
-	album_panel.position = Vector2(3, 14)
-	album_panel.size = Vector2(102, 150)
+	album_panel.position = Vector2(3, 34)
+	album_panel.size = Vector2(102, 132)
 	album_panel.visible = false
 	ui.add_child(album_panel)
 	small_label("Things it has seen", Vector2(3, 3), Vector2(96, 8), 6, album_panel)
 	album_empty = small_label("Nothing yet. Enable the camera and hold something steady in front of the back camera.", Vector2(3, 14), Vector2(96, 30), 5, album_panel)
 	var sc := ScrollContainer.new()
-	sc.position = Vector2(3, 14)
-	sc.size = Vector2(96, 132)
+	sc.position = Vector2(3, 34)
+	sc.size = Vector2(96, 100)
 	album_panel.add_child(sc)
 	album_grid = GridContainer.new()
 	album_grid.columns = 4
@@ -2181,7 +2189,7 @@ func build_sensor_ui(ui: CanvasLayer) -> void:
 
 func build_update_ui(ui: CanvasLayer) -> void:
 	upd_panel = Panel.new()
-	upd_panel.position = Vector2(3, 14)
+	upd_panel.position = Vector2(3, 34)
 	upd_panel.size = Vector2(102, 90)
 	upd_panel.visible = false
 	ui.add_child(upd_panel)
@@ -2193,9 +2201,8 @@ func build_update_ui(ui: CanvasLayer) -> void:
 
 
 func build_game_ui(ui: CanvasLayer) -> void:
-	small_btn("play", Vector2(2, 179), Vector2(24, 10), 5, func(): toggle_panel(game_panel), ui).flat = true
 	game_panel = Panel.new()
-	game_panel.position = Vector2(3, 14)
+	game_panel.position = Vector2(3, 34)
 	game_panel.size = Vector2(102, 72)
 	game_panel.visible = false
 	ui.add_child(game_panel)
@@ -2204,12 +2211,12 @@ func build_game_ui(ui: CanvasLayer) -> void:
 	small_btn("Catch the food", Vector2(3, 24), Vector2(96, 12), 5, func(): start_game("catch"), game_panel)
 	small_btn("Which way?", Vector2(3, 38), Vector2(96, 12), 5, func(): start_game("guess"), game_panel)
 	small_btn("Close", Vector2(3, 54), Vector2(96, 12), 5, func(): game_panel.visible = false, game_panel)
-	game_l = make_label(7, 30, 20)
+	game_l = make_label(7, 40, 20)
 	ui.add_child(game_l)
 	guess_row = Control.new()
 	ui.add_child(guess_row)
-	small_btn("< Left", Vector2(6, 158), Vector2(44, 16), 6, func(): guess(-1), guess_row)
-	small_btn("Right >", Vector2(58, 158), Vector2(44, 16), 6, func(): guess(1), guess_row)
+	small_btn("< Left", Vector2(6, 146), Vector2(44, 16), 6, func(): guess(-1), guess_row)
+	small_btn("Right >", Vector2(58, 146), Vector2(44, 16), 6, func(): guess(1), guess_row)
 	guess_row.visible = false
 	refresh_game_ui()
 
@@ -2479,8 +2486,9 @@ func upd_refresh_ui() -> void:
 			upd_action.text = "Try again"
 	if upd_msg != "" and upd_phase == "downloaded":
 		upd_status.text += "\n" + upd_msg
-	if upd_btn != null:
-		upd_btn.text = "upd!" if (upd_phase == "available" or upd_phase == "downloaded") else "upd"
+	cog_alert = upd_phase == "available" or upd_phase == "downloaded"
+	if cog_btn != null:
+		cog_btn.icon = icon_tex("cogbadge" if cog_alert else "cog")
 
 
 func toggle_panel(p: Panel) -> void:
@@ -2492,6 +2500,8 @@ func toggle_panel(p: Panel) -> void:
 	game_panel.visible = false
 	shop_panel.visible = false
 	diary_panel.visible = false
+	settings_panel.visible = false
+	dbg_panel.visible = false
 	p.visible = not was
 
 
@@ -2744,6 +2754,145 @@ func new_egg() -> void:
 	save_state()
 
 
+# ------------------------------------------------------------ navigation
+const UI_ICONS := {
+	"play": {"c": "#ffd05a", "r": ["....#....", "....#....", "...###...", "#########", ".#######.", "..#####..", ".###.###.", ".##...##.", ".#.....#."]},
+	"room": {"c": "#ff9ad9", "r": ["....#....", "...###...", "..#####..", ".#######.", "#########", ".#######.", ".###.###.", ".###.###.", ".###.###."]},
+	"diary": {"c": "#8bf0ff", "r": [".#######.", "##.....##", "#.#####.#", "#.......#", "#.#####.#", "#.......#", "#.#####.#", "##.....##", ".#######."]},
+	"album": {"c": "#a9f0a0", "r": ["..#####..", "#########", "#.......#", "#..###..#", "#.#...#.#", "#.#...#.#", "#..###..#", "#.......#", "#########"]},
+	"sleep": {"c": "#cfc9ff", "r": ["..####...", ".###.....", "###......", "###......", "###......", "####.....", ".#####..#", "..#######", "....####."]},
+	"cog": {"c": "#e9e0ff", "r": ["...#.#...", ".#.###.#.", "..#####..", "####.####", ".##...##.", "####.####", "..#####..", ".#.###.#.", "...#.#..."]},
+	"cogbadge": {"c": "#e9e0ff", "r": ["...#.#...", ".#.###.#.", "..#####..", "####.####", ".##...##.", "####.####", "..#####..", ".#.###.#.", "...#.#..."], "dot": "#ff5a6e"},
+}
+const BADGE := [".###.", "#####", "#####", "#####", ".###."]
+var icon_cache := {}
+
+
+func icon_tex(name: String) -> ImageTexture:
+	if icon_cache.has(name):
+		return icon_cache[name]
+	var d: Dictionary = UI_ICONS[name]
+	var rows: Array = d["r"]
+	var im := Image.create(11, 11, false, Image.FORMAT_RGBA8)
+	var c := Color(d["c"])
+	var dark := Color("#120f26")
+	for j in rows.size():
+		for i in rows[j].length():
+			if rows[j][i] == "#":
+				im.set_pixel(i + 2, j + 2, dark)
+	for j in rows.size():
+		for i in rows[j].length():
+			if rows[j][i] == "#":
+				im.set_pixel(i + 1, j + 1, c)
+	if d.has("dot"):
+		for j in 5:
+			for i in 5:
+				if BADGE[j][i] == "#":
+					im.set_pixel(6 + i, j, Color(d["dot"]))
+	var tx := ImageTexture.create_from_image(im)
+	icon_cache[name] = tx
+	return tx
+
+
+func nav_style(bg: Color, border: Color) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg
+	sb.set_border_width_all(1)
+	sb.border_color = border
+	sb.set_corner_radius_all(3)
+	return sb
+
+
+func icon_btn(icon: String, pos: Vector2, size: Vector2, cb: Callable, parent: Node) -> Button:
+	var b := Button.new()
+	b.icon = icon_tex(icon)
+	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.expand_icon = false
+	b.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	b.focus_mode = Control.FOCUS_NONE
+	b.add_theme_stylebox_override("normal", nav_style(Color("#2a2450", 0.9), Color("#4a3f8a")))
+	b.add_theme_stylebox_override("hover", nav_style(Color("#3a3270", 0.95), Color("#6a5fba")))
+	b.add_theme_stylebox_override("pressed", nav_style(Color("#ffcf5a", 0.95), Color("#fff0b0")))
+	b.pressed.connect(cb)
+	parent.add_child(b)
+	b.position = pos
+	b.size = size
+	return b
+
+
+func add_close(p: Panel, label: String = "Close") -> void:
+	small_btn(label, Vector2(3, p.size.y - 14), Vector2(p.size.x - 6, 11), 5, func(): p.visible = false, p)
+
+
+func build_nav(ui: CanvasLayer) -> void:
+	var strip := ColorRect.new()
+	strip.color = Color("#120f26", 0.6)
+	strip.position = Vector2(0, 170)
+	strip.size = Vector2(W, 22)
+	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui.add_child(strip)
+	var items := [["play", func(): toggle_panel(game_panel)], ["room", func(): toggle_panel(shop_panel)], ["diary", func(): toggle_panel(diary_panel)], ["album", func(): toggle_panel(album_panel)], ["sleep", tuck_in]]
+	var x := 3.0
+	for it in items:
+		icon_btn(it[0], Vector2(x, 173), Vector2(18, 16), it[1], ui)
+		x += 21.0
+	cog_btn = icon_btn("cog", Vector2(W - 21, 2), Vector2(18, 14), func(): toggle_panel(settings_panel), ui)
+	build_settings_ui(ui)
+	for pn in [sens_panel, album_panel, shop_panel, diary_panel, settings_panel]:
+		add_close(pn)
+
+
+func build_settings_ui(ui: CanvasLayer) -> void:
+	settings_panel = Panel.new()
+	settings_panel.position = Vector2(3, 34)
+	settings_panel.size = Vector2(102, 132)
+	settings_panel.visible = false
+	ui.add_child(settings_panel)
+	small_label("Settings", Vector2(3, 3), Vector2(96, 8), 6, settings_panel)
+	small_btn("Senses and permissions", Vector2(3, 16), Vector2(96, 12), 5, func(): toggle_panel(sens_panel), settings_panel)
+	small_btn("Updates", Vector2(3, 31), Vector2(96, 12), 5, func(): toggle_panel(upd_panel), settings_panel)
+	sound_btn = small_btn("Sound: on", Vector2(3, 46), Vector2(96, 12), 5, func():
+		mute = not mute
+		sound_btn.text = "Sound: off" if mute else "Sound: on", settings_panel)
+	var vb := small_btn("Digivi " + upd_current_name(), Vector2(3, 104), Vector2(96, 11), 4, func():
+		dev_taps += 1
+		if dev_taps >= 5:
+			dev_btn.visible = true
+			toast("Developer tools unlocked."), settings_panel)
+	vb.flat = true
+	dev_btn = small_btn("Developer tools", Vector2(3, 61), Vector2(96, 12), 5, func():
+		settings_panel.visible = false
+		dbg_panel.visible = true, settings_panel)
+	dev_btn.visible = false
+
+
+const NEED_ICONS := {
+	"hun": ["..#..", ".###.", "#####", "#####", ".###."],
+	"aff": [".#.#.", "#####", "#####", ".###.", "..#.."],
+	"ene": ["...#.", "..##.", ".###.", "..##.", ".#..."],
+	"cur": ["..#..", "#####", ".###.", "##.##", "#...#"],
+}
+const NEED_COLS := {"hun": "#ff6a6e", "aff": "#ff7ac8", "ene": "#ffd05a", "cur": "#8bf0ff"}
+
+
+func draw_status() -> void:
+	if idle or cer != null or S["stage"] == "egg":
+		return
+	var i := 0
+	for k in ["hun", "aff", "ene", "cur"]:
+		var x0 := 4 + i * 26
+		var v: float = S["needs"][k] / 100.0
+		var col := Color(NEED_COLS[k])
+		var low := v < 0.3
+		if low and sin(t * 6.0) > 0.0:
+			col = Color.WHITE
+		bitmap(x0, 18, NEED_ICONS[k], col)
+		rect(x0 + 7, 18, 15, 5, Color("#120f26"))
+		rect(x0 + 8, 19, 13, 3, Color("#2a2450"))
+		rect(x0 + 8, 19, roundi(13.0 * v), 3, col)
+		i += 1
+
+
 # ------------------------------------------------------- shop, diary, life
 func item_by_id(id: String) -> Dictionary:
 	for it in ITEMS:
@@ -2753,11 +2902,9 @@ func item_by_id(id: String) -> Dictionary:
 
 
 func build_life_ui(ui: CanvasLayer) -> void:
-	small_btn("room", Vector2(28, 179), Vector2(24, 10), 5, func(): toggle_panel(shop_panel), ui).flat = true
-	small_btn("diary", Vector2(54, 179), Vector2(24, 10), 5, func(): toggle_panel(diary_panel), ui).flat = true
 	shop_panel = Panel.new()
-	shop_panel.position = Vector2(3, 14)
-	shop_panel.size = Vector2(102, 150)
+	shop_panel.position = Vector2(3, 34)
+	shop_panel.size = Vector2(102, 132)
 	shop_panel.visible = false
 	ui.add_child(shop_panel)
 	small_label("Room and wardrobe", Vector2(3, 3), Vector2(96, 8), 6, shop_panel)
@@ -2765,21 +2912,21 @@ func build_life_ui(ui: CanvasLayer) -> void:
 	var sc := ScrollContainer.new()
 	shop_panel.add_child(sc)
 	sc.position = Vector2(3, 22)
-	sc.size = Vector2(96, 124)
+	sc.size = Vector2(96, 92)
 	shop_list = VBoxContainer.new()
 	shop_list.custom_minimum_size = Vector2(92, 0)
 	shop_list.add_theme_constant_override("separation", 2)
 	sc.add_child(shop_list)
 	diary_panel = Panel.new()
-	diary_panel.position = Vector2(3, 14)
-	diary_panel.size = Vector2(102, 150)
+	diary_panel.position = Vector2(3, 34)
+	diary_panel.size = Vector2(102, 132)
 	diary_panel.visible = false
 	ui.add_child(diary_panel)
 	small_label("Diary", Vector2(3, 3), Vector2(96, 8), 6, diary_panel)
 	var dsc := ScrollContainer.new()
 	diary_panel.add_child(dsc)
-	dsc.position = Vector2(3, 14)
-	dsc.size = Vector2(96, 132)
+	dsc.position = Vector2(3, 34)
+	dsc.size = Vector2(96, 100)
 	diary_l = Label.new()
 	diary_l.add_theme_font_size_override("font_size", 5)
 	diary_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -3417,6 +3564,7 @@ func _draw() -> void:
 	if S["stage"] != "egg" and (is_sleeping() or ns == "dormant") and not idle and randf() < 0.01:
 		add_part("z", pet_x + 8, GROUND - 24, 4, -8, 1.8)
 	draw_hat()
+	draw_status()
 	draw_game()
 	draw_viewfinder()
 	draw_parts()
@@ -3493,15 +3641,15 @@ func build_ui() -> void:
 	var ui := CanvasLayer.new()
 	ui_layer = ui
 	add_child(ui)
-	title_l = make_label(9, 12, 14)
+	title_l = make_label(9, 2, 14)
 	ui.add_child(title_l)
-	toast_l = make_label(6, 17, 22)
+	toast_l = make_label(6, 26, 22)
 	toast_l.modulate.a = 0.0
 	ui.add_child(toast_l)
 	cer_l = make_label(8, 42, 24)
 	cer_l.modulate.a = 0.0
 	ui.add_child(cer_l)
-	hint_l = make_label(6, 150, 36)
+	hint_l = make_label(6, 142, 28)
 	hint_l.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	ui.add_child(hint_l)
 	new_egg_b = Button.new()
@@ -3546,20 +3694,17 @@ func build_ui() -> void:
 	build_sensor_ui(ui)
 
 	# debug panel
-	var db := Button.new()
-	db.text = "dbg"
-	db.add_theme_font_size_override("font_size", 5)
-	db.flat = true
-	db.position = Vector2(W - 22, 2)
-	db.size = Vector2(20, 9)
-	ui.add_child(db)
 	dbg_panel = PanelContainer.new()
-	dbg_panel.position = Vector2(W - 62, 12)
+	dbg_panel.position = Vector2(3, 34)
 	dbg_panel.visible = false
 	ui.add_child(dbg_panel)
 	var vb := VBoxContainer.new()
-	dbg_panel.add_child(vb)
+	var dsc := ScrollContainer.new()
+	dsc.custom_minimum_size = Vector2(58, 120)
+	dsc.add_child(vb)
+	dbg_panel.add_child(dsc)
 	var items := [
+		["Close", func(): dbg_panel.visible = false],
 		["Drop food", func(): spawn_food()],
 		["+100 steps", func(): on_step(100)],
 		["Shake", func(): on_shake()],
@@ -3599,7 +3744,7 @@ func build_ui() -> void:
 		b.custom_minimum_size = Vector2(50, 8)
 		b.pressed.connect(it[1])
 		vb.add_child(b)
-	db.pressed.connect(func(): dbg_panel.visible = not dbg_panel.visible)
+	build_nav(ui)
 	var th := make_theme()
 	for c in ui.get_children():
 		if c is Control:
