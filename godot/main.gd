@@ -997,7 +997,23 @@ func copy_back(contour: Array) -> void:
 func has_perm(p: String) -> bool:
 	if not OS.has_feature("android"):
 		return true
+	var c = perm_cls()
+	if c != null:
+		return bool(c.hasPerm(Engine.get_singleton("AndroidRuntime").getActivity(), p))
 	return ("android.permission." + p) in OS.get_granted_permissions()
+
+
+var perm_cls_cache = null
+var perm_wait_t := 0.0
+var perm_poll_t := 0.0
+var perm_paused := false
+var perm_resumed := false
+
+
+func perm_cls():
+	if perm_cls_cache == null and OS.has_feature("android") and Engine.has_singleton("AndroidRuntime"):
+		perm_cls_cache = JavaClassWrapper.wrap("com.pierrejoshua.digivi.Native")
+	return perm_cls_cache
 
 
 func ask_perm(p: String, cb: Callable) -> void:
@@ -1005,7 +1021,34 @@ func ask_perm(p: String, cb: Callable) -> void:
 		cb.call(true)
 		return
 	perm_wait[p] = cb
-	OS.request_permission(p)
+	perm_wait_t = 0.0
+	perm_paused = false
+	perm_resumed = false
+	var c = perm_cls()
+	if c != null:
+		var list := p
+		if p == "ACCESS_FINE_LOCATION":
+			list = "ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION"
+		c.requestPerms(Engine.get_singleton("AndroidRuntime").getActivity(), list)
+	else:
+		OS.request_permission(p)
+
+
+func perm_poll(dt: float) -> void:
+	if perm_wait.is_empty():
+		return
+	perm_wait_t += dt
+	perm_poll_t += dt
+	if perm_poll_t < 0.4:
+		return
+	perm_poll_t = 0.0
+	for k in perm_wait.keys():
+		var granted := has_perm(k)
+		var denied := (perm_resumed and perm_wait_t > 1.5) or perm_wait_t > 90.0
+		if granted or denied:
+			var cb: Callable = perm_wait[k]
+			perm_wait.erase(k)
+			cb.call(granted)
 
 
 func on_perm_result(permission: String, granted: bool) -> void:
@@ -2383,6 +2426,7 @@ func _process(dt: float) -> void:
 		show["open"] = 0.0
 		vf_ok = false
 	bg_poll(dt)
+	perm_poll(dt)
 	upd_poll(dt)
 	svc_t += dt
 	if svc_t > 1.0:
@@ -2759,8 +2803,12 @@ func _ready() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_CLOSE_REQUEST:
+		if not perm_wait.is_empty():
+			perm_paused = true
 		save_state()
 	elif what == NOTIFICATION_APPLICATION_RESUMED:
+		if perm_paused:
+			perm_resumed = true
 		var hrs := clampf((Time.get_unix_time_from_system() - float(S["last"])) / 3600.0, 0.0, 24.0 * 30.0)
 		if S["stage"] != "egg" and hrs > 0.01:
 			decay(hrs, true)
