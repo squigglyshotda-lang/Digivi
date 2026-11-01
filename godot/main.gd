@@ -9,7 +9,16 @@ const GROUND := 133
 const INK := Color("#1a1330")
 const SAVE_PATH := "user://pet.json"
 const CHILD_XP := 900.0
-const BODY := {"baby": Color("#8be8c9"), "child": Color("#8be8c9")}
+const ADULT_XP := 4000.0
+const FORM := {"exp": "explorer", "cud": "cuddly", "che": "cheeky", "slp": "sleepy"}
+const BODY := {"baby": Color("#8be8c9"), "child": Color("#8be8c9"), "explorer": Color("#7fc8ff"), "cuddly": Color("#ffb3a1"), "cheeky": Color("#e9f06a"), "sleepy": Color("#dcd7ff")}
+const MARKS := {
+	"plus": [".#.", "###", ".#."],
+	"explorer": ["..#..", ".#.#.", "#...#", ".#.#.", "..#.."],
+	"cuddly": [".#.#.", "#####", "#####", ".###.", "..#.."],
+	"cheeky": ["...##", "..##.", ".####", ".##..", "##..."],
+	"sleepy": [".###.", "##...", "##...", "##...", ".###."],
+}
 const MARKCOL := {
 	"happy": Color("#ffb347"), "calm": Color("#ffe08a"), "excited": Color("#fff7a0"),
 	"sad": Color("#5aa0ff"), "sleepy": Color("#9a8ae6"), "startled": Color("#ffffff"), "dizzy": Color("#ff9ad9"),
@@ -60,6 +69,8 @@ var ga := 1.0
 var mute := false
 var hint_key := ""
 var namer_shown := false
+var cer = null
+var cer_l: Label
 
 # sky cache
 var sky_img: Image
@@ -424,13 +435,14 @@ func draw_world() -> void:
 
 
 # ------------------------------------------------------------------- pet
-func draw_mark(cx: float, y: float, col: Color) -> void:
-	var w := 3
+func draw_mark(cx: float, y: float, key: String, col: Color) -> void:
+	var rows: Array = MARKS[key]
+	var w: int = rows[0].length()
 	ga = 0.25 + 0.12 * sin(t * 3.0)
-	disc(cx, y + 1.5, 4, col)
+	disc(cx, y + rows.size() / 2.0, ceili(w / 2.0) + 2, col)
 	ga = 1.0
-	bitmap(cx - w / 2.0, y, PLUS, col)
-	px(cx, y + 1, Color.WHITE)
+	bitmap(cx - w / 2.0, y, rows, col)
+	px(cx, y + floorf(rows.size() / 2.0), Color.WHITE)
 
 
 func blob_shape(cx: float, cy: float, rx: float, ry: float, wob: float, col: Color) -> void:
@@ -544,17 +556,25 @@ func draw_egg(cx: float, gy: float, mc: Color) -> void:
 	has_bbox = true
 
 
-func dims(stage: String) -> Vector2:
-	return Vector2(9, 8) if stage == "baby" else Vector2(11, 10)
+func dims(stage: String, form: String) -> Vector3:
+	if stage == "baby":
+		return Vector3(9, 8, 0)
+	if stage == "child":
+		return Vector3(11, 10, 0)
+	match form:
+		"explorer": return Vector3(10, 10, 3)
+		"cuddly": return Vector3(17, 15, 0)
+		"cheeky": return Vector3(12, 11, 0)
+	return Vector3(15, 10, 6)
 
 
-func draw_pet(stage: String, x: float, gy: float, sq: float, dormant: bool, still: bool) -> void:
-	var m := mood()
+func draw_pet(stage: String, form: String, x: float, gy: float, sq: float, dormant: bool, still: bool, mood_over: String = "") -> void:
+	var m := mood() if mood_over == "" else mood_over
 	var mc: Color = MARKCOL.get(m, Color("#ffe08a"))
 	if stage == "egg":
 		draw_egg(roundf(x), gy, mc)
 		return
-	var d := dims(stage)
+	var d := dims(stage, form)
 	var hop := 0.0
 	if not still:
 		if dance > 0.0:
@@ -567,27 +587,185 @@ func draw_pet(stage: String, x: float, gy: float, sq: float, dormant: bool, stil
 			hop = absf(sin(t * 8.0)) * 4.0
 	var rx := roundi(d.x / sqrt(sq))
 	var ry := roundi(d.y * sq)
-	var bob := 0.0 if still else sin(t * 3.0)
+	var bob := 0.0 if still else sin(t * (1.2 if form == "sleepy" else 3.0))
 	var cx := roundf(x)
-	var cy := roundf(gy - ry - hop - bob)
-	var col: Color = BODY[stage]
+	var cy := roundf(gy - ry - d.z - hop - bob)
+	var col: Color = BODY[form if form != "" else stage]
 	if dormant:
 		col = mixc(col, Color("#8a86a8"), 0.4)
 	var belly := mixc(col, Color.WHITE, 0.35)
 	ga = 0.28
 	ell(cx, gy + 1, roundi(rx * 0.9), 2, Color.BLACK)
 	ga = 1.0
-	var wob := 0.14 if stage == "child" else 0.04
-	blob_shape(cx, cy, rx + 1, ry + 1, wob, INK)
-	blob_shape(cx, cy, rx, ry, wob, col)
-	blob_shape(cx, cy + roundi(ry * 0.35), roundi(rx * 0.62), roundi(ry * 0.5), wob, belly)
-	var hl := mixc(col, Color.WHITE, 0.7)
-	px(cx - roundi(rx * 0.5), cy - roundi(ry * 0.55), hl)
-	px(cx - roundi(rx * 0.5) + 1, cy - roundi(ry * 0.55), hl)
-	draw_face(cx, cy, rx, ry, m)
-	draw_mark(cx, cy + roundi(ry * 0.4), mc)
-	bbox = Rect2(cx - rx - 2, cy - ry - 4, rx * 2 + 4, ry + 4 + (gy - cy))
+	var wob := 0.14 if stage == "child" else (0.04 if stage == "baby" else 0.03)
+	if form == "explorer":
+		var fl := sin(t * (9.0 if act == "wander" else 5.0)) * 0.5 + 0.2
+		for sd in [-1, 1]:
+			for i in range(1, 12):
+				var xx: float = cx + sd * (rx + i - 1)
+				var top := cy - 1 - roundi(i * (0.7 + fl * 0.5))
+				var bot := cy + 3 - roundi(i * 0.25 * (1.0 - fl * 0.3))
+				if bot < top:
+					continue
+				rect(xx, top - 1, 1, 2, INK)
+				rect(xx, bot + 1, 1, 1, INK)
+				rect(xx, top + 1, 1, bot - top, Color.WHITE if i % 3 == 0 else Color("#9fd4ff"))
+	if form == "cuddly":
+		for sd in [-1, 1]:
+			var ex: float = cx + sd * roundi(rx * 0.6)
+			disc(ex, cy - ry + 1, 4, INK)
+			disc(ex, cy - ry + 1, 3, col)
+			px(ex, cy - ry + 2, Color("#ff9aa8"))
+	if form == "cheeky":
+		for i in 8:
+			var ang := PI * (1.1 + 0.8 * i / 7.0)
+			var dx := cos(ang)
+			var dy := sin(ang)
+			var ln := 4 + (i % 2) * 2
+			for k in ln:
+				px(cx + dx * (rx + 1 + k), cy + dy * (ry + 1 + k), INK if k > ln - 2 else Color("#b8a800"))
+	var face_x := cx
+	var face_y := cy
+	var ry_eff: float = ry
+	var rx_eff: float = rx
+	if form == "sleepy":
+		var discs := [[-9, 3, 6], [-3, -2, 8], [5, -1, 8], [11, 3, 5], [1, 4, 7]]
+		for dd in discs:
+			disc(cx + dd[0], cy + dd[1], dd[2] + 1, INK)
+		for dd in discs:
+			disc(cx + dd[0], cy + dd[1], dd[2], col)
+		ell(cx + 1, cy + 6, 9, 3, mixc(col, Color("#9a8ae6"), 0.25))
+		px(cx - 5, cy - 7, Color.WHITE)
+		px(cx - 4, cy - 7, Color.WHITE)
+		face_x = cx + 1
+		face_y = cy + 1
+		ry_eff = 10
+		rx_eff = 13
+	else:
+		blob_shape(cx, cy, rx + 1, ry + 1, wob, INK)
+		blob_shape(cx, cy, rx, ry, wob, col)
+		blob_shape(cx, cy + roundi(ry * 0.35), roundi(rx * 0.62), roundi(ry * 0.5), wob, belly)
+		var hl := mixc(col, Color.WHITE, 0.7)
+		px(cx - roundi(rx * 0.5), cy - roundi(ry * 0.55), hl)
+		px(cx - roundi(rx * 0.5) + 1, cy - roundi(ry * 0.55), hl)
+		if form == "cuddly":
+			var a := 0.0
+			while a < 6.28:
+				px(cx + (rx + 1) * cos(a), cy + (ry + 1) * sin(a), mixc(col, Color.WHITE, 0.5) if int(floorf(a / 0.45)) % 2 == 1 else INK)
+				a += 0.45
+	draw_face(face_x, face_y, rx_eff, ry_eff, m)
+	if stage == "adult":
+		draw_mark(face_x, face_y + roundi(ry_eff * 0.35), form, mc)
+	else:
+		draw_mark(face_x, face_y + roundi(ry_eff * 0.4), "plus", mc)
+	if form == "cheeky":
+		for j in 5:
+			if int(floorf(t * 10.0 + j)) % 3 == 0:
+				continue
+			var aa := t * 2.0 + j * 1.26
+			var rr := rx + 5 + sin(t * 5.0 + j) * 2.0
+			px(cx + cos(aa) * rr, cy + sin(aa) * (ry + 4), Color("#fff7a0"))
+	bbox = Rect2(cx - rx - 2, cy - ry - 4, rx * 2 + 4, gy - (cy - ry - 4))
 	has_bbox = true
+
+
+# ---------------------------------------------------------------- growth
+func total_xp() -> float:
+	var x: Dictionary = S["xp"]
+	return x["exp"] + x["cud"] + x["che"] + x["slp"]
+
+
+func dominant() -> String:
+	var best := "exp"
+	for k in S["xp"]:
+		if S["xp"][k] > S["xp"][best]:
+			best = k
+	return best
+
+
+func check_growth() -> void:
+	if cer != null or S["name"] == "":
+		return
+	var tx := total_xp()
+	if S["stage"] == "baby" and tx >= CHILD_XP:
+		start_ceremony("child", "")
+	elif S["stage"] == "child" and tx >= ADULT_XP:
+		start_ceremony("adult", dominant())
+
+
+func start_ceremony(to: String, form_key: String) -> void:
+	if cer != null:
+		return
+	cer = {"t": 0.0, "from_stage": S["stage"], "from_form": S.get("form", ""), "to": to, "form_key": form_key, "done": false}
+	sfx(330, 0.5, "triangle", 0.05, 330)
+	cer_l.text = "%s is changing..." % (S["name"] if S["name"] != "" else "It")
+	cer_l.modulate.a = 1.0
+
+
+func update_ceremony(dt: float) -> void:
+	cer["t"] += dt
+	var c: Dictionary = cer
+	if c["t"] >= 3.0 and not c["done"]:
+		c["done"] = true
+		S["stage"] = c["to"]
+		if c["form_key"] != "":
+			S["form"] = c["form_key"]
+		burst(54, 100, 36, [Color("#fff7a0"), Color("#ff9ad9"), Color("#8bf0ff"), Color.WHITE], 70.0)
+		boing()
+		get_tree().create_timer(0.12).timeout.connect(func(): sfx(1040, 0.3, "square", 0.05, 200))
+		var nm: String = S["name"] if S["name"] != "" else "It"
+		cer_l.text = nm + (" is growing up." if c["to"] == "child" else " has grown up.")
+		save_state()
+	if c["t"] >= 6.0:
+		cer = null
+		cer_l.modulate.a = 0.0
+
+
+func draw_ceremony() -> void:
+	var c: Dictionary = cer
+	var ct: float = c["t"]
+	ga = 0.5
+	rect(0, 0, W, H, Color.BLACK)
+	ga = 1.0
+	var stg: String = c["from_stage"] if ct < 3.0 else c["to"]
+	var fk: String = c["from_form"] if ct < 3.0 else (c["form_key"] if c["form_key"] != "" else S.get("form", ""))
+	var fm: String = FORM.get(fk, "") if stg == "adult" else ""
+	var shake := sin(ct * 60.0) * 1.5 if ct > 2.0 and ct < 2.6 else 0.0
+	var sc := 1.0 + 0.06 * sin(ct * 8.0) if ct < 3.0 else 1.0
+	draw_pet(stg, fm, 54 + shake, 118, sc, false, ct < 3.0, "excited" if ct < 3.0 else "happy")
+	var cols := [Color("#fff7a0"), Color("#ff9ad9"), Color("#8bf0ff")]
+	if ct < 5.2:
+		for i in 14:
+			var ang := ct * 4.0 + i * 0.45
+			var r := 0.0
+			if ct < 2.0:
+				r = lerpf(46.0, 22.0, ct / 2.0)
+			elif ct < 3.4:
+				r = 22.0
+			else:
+				r = 22.0 + (ct - 3.4) * 26.0
+			px(54 + cos(ang) * r, 100 + sin(ang) * r * 0.8, cols[i % 3])
+	var a := 0.0
+	if ct >= 2.6 and ct < 3.0:
+		a = (ct - 2.6) / 0.4
+	elif ct >= 3.0 and ct < 3.5:
+		a = 1.0 - (ct - 3.0) / 0.5
+	if a > 0.0:
+		ga = a
+		rect(0, 0, W, H, Color.WHITE)
+		ga = 1.0
+
+
+func force_stage(stage: String, key: String) -> void:
+	if S["stage"] == "egg":
+		start_hatch()
+	if S["name"] == "":
+		S["name"] = "Test"
+		namer.visible = false
+		namer_shown = true
+	if stage == "child":
+		S["xp"]["exp"] = maxf(S["xp"]["exp"], 300.0)
+	start_ceremony(stage, key)
 
 
 # --------------------------------------------------------------- actions
@@ -669,6 +847,7 @@ func tick_1s() -> void:
 			S["xp"]["slp"] += 1.0 / 60.0
 	if dance > 0.0:
 		need("aff", 0.3)
+	check_growth()
 
 
 func update_pet(dt: float) -> void:
@@ -704,7 +883,7 @@ func update_pet(dt: float) -> void:
 				pet_tx = rnd(22, 86)
 			else:
 				act = "rest"
-	var speed := 16.0 if act == "food" else 10.0
+	var speed := (16.0 if act == "food" else 10.0) * (0.6 if S.get("form", "") == "slp" else 1.0)
 	if act != "rest":
 		var dx := pet_tx - pet_x
 		if absf(dx) > 1.0:
@@ -725,15 +904,23 @@ func _process(dt: float) -> void:
 	update_parts(dt)
 	for fd in food:
 		fd["y"] = minf(GROUND + 4.0, fd["y"] + 70.0 * dt)
-	update_pet(dt)
-	acc += dt
-	while acc >= 1.0:
-		acc -= 1.0
-		tick_1s()
-	save_acc += dt
-	if save_acc > 5.0:
-		save_acc = 0.0
-		save_state()
+	if cer != null:
+		update_ceremony(dt)
+	else:
+		update_pet(dt)
+		acc += dt
+		while acc >= 1.0:
+			acc -= 1.0
+			tick_1s()
+		save_acc += dt
+		if save_acc > 5.0:
+			save_acc = 0.0
+			save_state()
+		if S["stage"] == "adult" and S.get("form", "") == "slp" and neglect_state() != "away":
+			spark_acc += dt
+			if spark_acc > 0.35:
+				spark_acc = 0.0
+				add_part("px", pet_x + rnd(-10, 10), GROUND - 12, 0, 12, 1.2, Color("#bfe6ff"))
 	if S["stage"] != "egg" and S["name"] == "" and not namer_shown and funny <= 0.0:
 		show_namer()
 	if toast_t > 0.0:
@@ -750,9 +937,12 @@ func _draw() -> void:
 	draw_world()
 	has_bbox = false
 	var ns := neglect_state()
-	if ns != "away" and ns != "lost":
+	if cer != null:
+		draw_ceremony()
+	elif ns != "away" and ns != "lost":
 		var dormant := ns == "dormant"
-		draw_pet(S["stage"], pet_x, GROUND + 1, 0.82 if dormant else squish, dormant, dormant or is_sleeping())
+		var fm: String = FORM.get(S.get("form", ""), "") if S["stage"] == "adult" else ""
+		draw_pet(S["stage"], fm, pet_x, GROUND + 1, 0.82 if dormant else squish, dormant, dormant or is_sleeping())
 	elif ns == "lost":
 		ell(54, GROUND + 1, 14, 3, Color("#7a5a3a"))
 		ell(54, GROUND, 12, 2, Color("#a07a4a"))
@@ -767,7 +957,7 @@ func in_box(p: Vector2) -> bool:
 
 
 func _unhandled_input(e: InputEvent) -> void:
-	if namer.visible:
+	if namer.visible or cer != null:
 		return
 	if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
 		if e.pressed:
@@ -815,6 +1005,9 @@ func build_ui() -> void:
 	toast_l = make_label(6, 17, 22)
 	toast_l.modulate.a = 0.0
 	ui.add_child(toast_l)
+	cer_l = make_label(8, 42, 24)
+	cer_l.modulate.a = 0.0
+	ui.add_child(cer_l)
 	hint_l = make_label(6, 150, 36)
 	hint_l.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	ui.add_child(hint_l)
@@ -861,8 +1054,9 @@ func build_ui() -> void:
 	var db := Button.new()
 	db.text = "dbg"
 	db.add_theme_font_size_override("font_size", 5)
-	db.position = Vector2(W - 16, 2)
-	db.size = Vector2(14, 9)
+	db.flat = true
+	db.position = Vector2(W - 22, 2)
+	db.size = Vector2(20, 9)
 	ui.add_child(db)
 	dbg_panel = PanelContainer.new()
 	dbg_panel.position = Vector2(W - 62, 12)
@@ -873,6 +1067,11 @@ func build_ui() -> void:
 	var items := [
 		["Drop food", func(): spawn_food()],
 		["Hatch now", func(): if S["stage"] == "egg": start_hatch()],
+		["Grow: child", func(): force_stage("child", "")],
+		["Adult: explorer", func(): force_stage("adult", "exp")],
+		["Adult: cuddly", func(): force_stage("adult", "cud")],
+		["Adult: cheeky", func(): force_stage("adult", "che")],
+		["Adult: sleepy", func(): force_stage("adult", "slp")],
 		["Needs low", func(): set_needs(10.0)],
 		["Needs full", func(): set_needs(100.0)],
 		["Sad", func(): dbg_neglect = "sad"],
@@ -955,19 +1154,18 @@ var shot_n := 0
 func shot_tick() -> void:
 	shot_n += 1
 	match shot_n:
-		20: save_shot("egg")
-		21: tap(); tap(); tap(); tap(); tap()
-		60: save_shot("baby")
-		61:
-			S["name"] = "Pip"
-			namer.visible = false
-			spawn_food()
-		120: save_shot("food")
-		121: set_needs(10.0); dbg_neglect = "sad"
-		150: save_shot("sad")
-		151: dbg_neglect = ""; set_needs(100.0); dbg_hour = 22.0
-		200: save_shot("night")
-		201: get_tree().quit()
+		10: force_stage("child", "")
+		40: save_shot("cer")
+		220: save_shot("child")
+		221: force_stage("adult", "exp")
+		420: save_shot("exp")
+		421: force_stage("adult", "cud")
+		620: save_shot("cud")
+		621: force_stage("adult", "che")
+		820: save_shot("che")
+		821: force_stage("adult", "slp")
+		1020: save_shot("slp")
+		1021: get_tree().quit()
 
 
 func save_shot(n: String) -> void:
