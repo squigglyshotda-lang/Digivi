@@ -34,6 +34,54 @@ const ZZ := ["###", "..#", ".#.", "#..", "###"]
 const PLUS := [".#.", "###", ".#."]
 const CRACK := [[0, -13], [1, -12], [0, -11], [-1, -10], [0, -9], [1, -8], [2, -7], [1, -6], [0, -5], [-1, -4], [-2, -3], [-3, -2], [-4, -1], [-3, 0], [-2, 1], [-1, 2], [0, 3], [1, 4], [2, 5], [3, 6]]
 
+const GEMS := [Color("#ff7ac8"), Color("#7ad8ff"), Color("#ffd34e"), Color("#9aff9a"), Color("#c49aff"), Color("#ff9a6b")]
+const NIGHT := Color("#10153a")
+const SLOTS := [[22, 84, true], [88, 98, true], [95, 133, false], [13, 133, false], [46, 78, true], [28, 50, true]]
+const NOTE := [".##", ".#.", ".#.", "##.", "##."]
+const QM := ["###", "..#", ".#.", "...", ".#."]
+const ICONS := {
+	"circle": ["..###..", ".#...#.", "#.....#", "#.....#", "#.....#", ".#...#.", "..###.."],
+	"square": ["#######", "#.....#", "#.....#", "#.....#", "#.....#", "#.....#", "#######"],
+	"line": [".......", ".......", "#######", "#.....#", "#######", ".......", "......."],
+	"blob": [".##.##.", "#######", "#######", ".#####.", "#######", ".##.##.", "..###.."],
+	"stripes": ["#.#.#.#", "#.#.#.#", "#.#.#.#", "#.#.#.#", "#.#.#.#", "#.#.#.#", "#.#.#.#"],
+	"busy": ["#..#..#", "..#.#..", ".#...#.", "#..#..#", ".#...#.", "..#.#..", "#..#..#"],
+	"qmark": [".#####.", "#.....#", ".....#.", "...##..", "...#...", ".......", "...#..."],
+}
+const PLACE_NAMES := ["the upside-down tree", "the floating door", "the spiral tower", "the eye stone", "the stairs to nowhere", "the whale cloud"]
+const BAYER := [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]
+const VW := 28
+const VH := 36
+const CW := 96
+const CH := 120
+const CAM_SHADER := """
+shader_type canvas_item;
+uniform sampler2D tex0 : filter_linear;
+uniform sampler2D tex1 : filter_linear;
+uniform int ycbcr = 0;
+uniform int rot = 0;
+uniform int mirror = 0;
+uniform vec2 crop = vec2(1.0, 1.0);
+void fragment() {
+	vec2 q = (UV - 0.5) * crop;
+	if (mirror == 1) { q.x = -q.x; }
+	vec2 s = q;
+	if (rot == 1) { s = vec2(q.y, -q.x); }
+	else if (rot == 2) { s = -q; }
+	else if (rot == 3) { s = vec2(-q.y, q.x); }
+	vec2 uv = s + 0.5;
+	vec3 c;
+	if (ycbcr == 1) {
+		float y = texture(tex0, uv).r;
+		vec2 cc = texture(tex1, uv).rg - vec2(0.5);
+		c = vec3(y + 1.402 * cc.y, y - 0.344136 * cc.x - 0.714136 * cc.y, y + 1.772 * cc.x);
+	} else {
+		c = texture(tex0, uv).rgb;
+	}
+	COLOR = vec4(clamp(c, 0.0, 1.0), 1.0);
+}
+"""
+
 # ---------------------------------------------------------------- state
 var S := {}
 var t := 0.0
@@ -71,6 +119,70 @@ var hint_key := ""
 var namer_shown := false
 var cer = null
 var cer_l: Label
+var sing := 0.0
+var watch := 0.0
+var tint := Color.WHITE
+var tint_t := 0.0
+var step_acc := 0.0
+var step_pending := 0
+var cur_place := -1
+var face_last := -99.0
+
+# sensors
+var m_ema := 9.8
+var m_last_step := 0
+var m_last_shake := 0
+var m_spikes: Array = []
+var m_tilt := 50.0
+var m_got := false
+var mic_on := false
+var mic_cap: AudioEffectCapture
+var mic_player: AudioStreamPlayer
+var mic_lvl := 0.0
+var mic_base := 0.02
+var mic_quiet := 0.0
+var mic_voice := 0.0
+var mic_contour: Array = []
+var mic_last_samp := 0.0
+var mic_last_loud := -9.0
+var geo_on := false
+var geo_cls = null
+var geo_t := 0.0
+var perm_wait := {}
+var status_labels := {}
+var stats_l: Label
+
+# camera
+var cam_mode := "auto"
+var cam_on := false
+var cam_feed: CameraFeed = null
+var cam_facing := "back"
+var cam_posture := "up"
+var cam_want_t := 0.0
+var cam_starting := false
+var cam_t := 0.0
+var cam_ft := 0.0
+var cam_steady := 0.0
+var cam_prev := PackedFloat32Array()
+var cam_bright := 0.0
+var cam_last_sig := PackedFloat32Array()
+var cam_vp: SubViewport
+var cam_mat: ShaderMaterial
+var cam_big := PackedByteArray()
+var vf_tex: ImageTexture
+var vf_ok := false
+var cam_rot := {"back": 1, "front": 3}
+var cam_flip := {"back": false, "front": true}
+var show := {"open": 0.0, "steady": 0.0, "last_keep": -99.0, "flash": 0.0, "freeze": 0.0, "bubble": null, "bubble_t": 0.0, "tilt": 0.0, "tilt_dir": 1}
+var taking := false
+var sens_panel: Panel
+var album_panel: Panel
+var album_grid: GridContainer
+var album_detail: Panel
+var album_detail_img: TextureRect
+var album_detail_l: Label
+var album_empty: Label
+
 
 # sky cache
 var sky_img: Image
@@ -97,7 +209,7 @@ func fresh() -> Dictionary:
 		"stage": "egg", "name": "", "taps": 0,
 		"xp": {"exp": 0.0, "cud": 0.0, "che": 0.0, "slp": 0.0},
 		"needs": {"hun": 70.0, "aff": 70.0, "ene": 80.0, "cur": 60.0},
-		"steps": 0, "faces": 0, "places": [], "neglectH": 0.0, "last": Time.get_unix_time_from_system(),
+		"steps": 0, "faces": 0, "places": [], "collection": [], "album": [], "shows": 0, "sens": {"motion": true, "mic": false, "cam": false, "geo": false}, "neglectH": 0.0, "last": Time.get_unix_time_from_system(),
 	}
 
 
@@ -368,6 +480,8 @@ func draw_parts() -> void:
 		match p["kind"]:
 			"heart":
 				bitmap(p["x"] - 2, p["y"] - 2, HEART, Color("#ff7ac8"))
+			"note":
+				bitmap(p["x"] - 1, p["y"] - 2, NOTE, p["c"])
 			"z":
 				bitmap(p["x"] - 1, p["y"] - 2, ZZ, Color("#cfc9ff"))
 			_:
@@ -428,10 +542,25 @@ func draw_world() -> void:
 		cloud(fposmod(t * (2.5 + i * 1.3) + i * 53.0, W + 40.0) - 20.0, 26 + i * 24, cc)
 	draw_island(12, 110 + sin(t * 0.6) * 2, 9, Color("#7fe0a0"), Color("#7a6aa6"), 7, n)
 	draw_island(98, 104 + sin(t * 0.5 + 2.0) * 2, 8, Color("#7fe0a0"), Color("#7a6aa6"), 6, n)
+	draw_places(n, false)
 	draw_island(54, GROUND, 48, Color("#5fcf8a"), Color("#7a6aa6"), 26, n)
+	draw_places(n, true)
+	for k in S["places"].size():
+		var tx := toy_x(k)
+		var gc: Color = GEMS[k % 6]
+		rect(tx - 1, GROUND + 3, 3, 3, gc)
+		px(tx - 1, GROUND + 3, mixc(gc, Color.WHITE, 0.6))
+		rect(tx - 1, GROUND + 5, 3, 1, mixc(gc, Color.BLACK, 0.3))
 	for fd in food:
 		disc(fd["x"], roundf(fd["y"]), 1, Color("#ff5a6e"))
 		px(fd["x"] + 1, fd["y"] - 2, Color("#4fc47e"))
+	var ci := 0
+	for hx in S["collection"]:
+		var cc2 := Color(hx)
+		rect(3 + ci * 8, H - 8, 6, 6, INK)
+		rect(4 + ci * 8, H - 7, 4, 4, cc2)
+		px(4 + ci * 8, H - 7, mixc(cc2, Color.WHITE, 0.55))
+		ci += 1
 
 
 # ------------------------------------------------------------------- pet
@@ -445,11 +574,11 @@ func draw_mark(cx: float, y: float, key: String, col: Color) -> void:
 	px(cx, y + floorf(rows.size() / 2.0), Color.WHITE)
 
 
-func blob_shape(cx: float, cy: float, rx: float, ry: float, wob: float, col: Color) -> void:
+func blob_shape(cx: float, cy: float, rx: float, ry: float, wob: float, col: Color, shear: float = 0.0) -> void:
 	for y in range(-int(ry), int(ry) + 1):
 		var k := sqrt(maxf(0.0, 1.0 - (y * y) / (ry * ry + 0.01)))
 		var w := maxi(0, roundi(rx * k * (1.0 + wob * sin(t * 2.6 + y * 0.55))))
-		var off := roundi(wob * 3.0 * sin(t * 1.9 + y * 0.3))
+		var off := roundi(wob * 3.0 * sin(t * 1.9 + y * 0.3) + shear * y * 0.15)
 		rect(cx - w + off, cy + y, w * 2 + 1, 1, col)
 
 
@@ -491,7 +620,7 @@ func draw_eye(ex: float, ey: float, kind: String, s: int, lx: int) -> void:
 			px(ex + 1, ey + 2, INK)
 
 
-func draw_face(cx: float, cy: float, rx: float, ry: float, m: String) -> void:
+func draw_face(cx: float, cy: float, rx: float, ry: float, m: String, singing: bool = false) -> void:
 	var sp := maxi(3, roundi(rx * 0.42))
 	var ey := cy - roundi(ry * 0.3)
 	var my := cy + roundi(ry * 0.08)
@@ -503,7 +632,7 @@ func draw_face(cx: float, cy: float, rx: float, ry: float, m: String) -> void:
 	draw_eye(cx - sp, ey, kind, -1, lx)
 	draw_eye(cx + sp, ey, kind, 1, lx)
 	var mc := Color("#7a2a4a")
-	if m == "excited":
+	if singing or m == "excited":
 		rect(cx - 1, my, 3, 2, mc)
 	elif m == "happy":
 		px(cx - 2, my, INK)
@@ -591,6 +720,8 @@ func draw_pet(stage: String, form: String, x: float, gy: float, sq: float, dorma
 	var cx := roundf(x)
 	var cy := roundf(gy - ry - d.z - hop - bob)
 	var col: Color = BODY[form if form != "" else stage]
+	if tint_t > 0.0:
+		col = mixc(col, tint, 0.4 * minf(1.0, tint_t))
 	if dormant:
 		col = mixc(col, Color("#8a86a8"), 0.4)
 	var belly := mixc(col, Color.WHITE, 0.35)
@@ -642,8 +773,9 @@ func draw_pet(stage: String, form: String, x: float, gy: float, sq: float, dorma
 		ry_eff = 10
 		rx_eff = 13
 	else:
-		blob_shape(cx, cy, rx + 1, ry + 1, wob, INK)
-		blob_shape(cx, cy, rx, ry, wob, col)
+		var shr: float = show["tilt_dir"] * 7.0 * minf(1.0, show["tilt"]) if show["tilt"] > 0.0 else 0.0
+		blob_shape(cx, cy, rx + 1, ry + 1, wob, INK, shr)
+		blob_shape(cx, cy, rx, ry, wob, col, shr)
 		blob_shape(cx, cy + roundi(ry * 0.35), roundi(rx * 0.62), roundi(ry * 0.5), wob, belly)
 		var hl := mixc(col, Color.WHITE, 0.7)
 		px(cx - roundi(rx * 0.5), cy - roundi(ry * 0.55), hl)
@@ -653,7 +785,10 @@ func draw_pet(stage: String, form: String, x: float, gy: float, sq: float, dorma
 			while a < 6.28:
 				px(cx + (rx + 1) * cos(a), cy + (ry + 1) * sin(a), mixc(col, Color.WHITE, 0.5) if int(floorf(a / 0.45)) % 2 == 1 else INK)
 				a += 0.45
-	draw_face(face_x, face_y, rx_eff, ry_eff, m)
+	if show["tilt"] > 0.0:
+		face_x += show["tilt_dir"] * 2
+		face_y += 1
+	draw_face(face_x, face_y, rx_eff, ry_eff, m, sing > 0.0)
 	if stage == "adult":
 		draw_mark(face_x, face_y + roundi(ry_eff * 0.35), form, mc)
 	else:
@@ -667,6 +802,1047 @@ func draw_pet(stage: String, form: String, x: float, gy: float, sq: float, dorma
 			px(cx + cos(aa) * rr, cy + sin(aa) * (ry + 4), Color("#fff7a0"))
 	bbox = Rect2(cx - rx - 2, cy - ry - 4, rx * 2 + 4, gy - (cy - ry - 4))
 	has_bbox = true
+
+
+# ------------------------------------------------------------ landmarks
+func draw_lm(i: int, x: float, y: float, n: float) -> void:
+	match i:
+		0:
+			draw_island(x, y, 9, Color("#6fd69a"), Color("#7a6aa6"), 6, n)
+			rect(x - 1, y + 4, 3, 9, Color("#8a5a3a"))
+			disc(x, y + 16, 6, mixc(Color("#3fae6e"), NIGHT, n * 0.5))
+			disc(x - 3, y + 14, 3, mixc(Color("#4fc47e"), NIGHT, n * 0.5))
+			disc(x + 4, y + 15, 3, mixc(Color("#4fc47e"), NIGHT, n * 0.5))
+		1:
+			rect(x - 5, y - 16, 11, 17, Color("#e8d7a8"))
+			rect(x - 4, y - 15, 9, 16, mixc(Color("#8a4b7a"), NIGHT, n * 0.4))
+			px(x + 2, y - 7, Color("#ffd34e"))
+			rect(x - 1, y - 14, 3, 1, mixc(Color("#ffd34e"), Color("#8a4b7a"), 0.4 + 0.3 * sin(t * 2.0)))
+			rect(x - 7, y + 3, 5, 1, Color("#cfc3ee"))
+			rect(x + 1, y + 6, 5, 1, Color("#cfc3ee"))
+		2:
+			var cols := [Color("#f2a6c4"), Color("#a6d8f2"), Color("#f2e2a6"), Color("#c4a6f2")]
+			for k in 7:
+				var w := 7 - int(floorf(k * 0.6))
+				var c := mixc(cols[k % 4], NIGHT, n * 0.45)
+				var ox := roundf(sin(k * 0.9) * 1.5)
+				rect(x - w + ox, y - k * 6 - 6, w * 2 + 1, 6, c)
+				rect(x - w + ox, y - k * 6 - 6, w * 2 + 1, 1, mixc(c, Color.WHITE, 0.35))
+			rect(x, y - 52, 1, 8, INK)
+			rect(x + 1, y - 52, 4, 3, Color("#ff7a7a"))
+		3:
+			var sc := mixc(Color("#8b86a8"), NIGHT, n * 0.4)
+			ell(x, y - 9, 10, 9, sc)
+			ell(x, y - 10, 6, 4, Color.WHITE)
+			var ix := x + clampf((pet_x - x) / 30.0, -1.0, 1.0) * 3.0
+			disc(ix, y - 10, 2, Color("#46c2a0"))
+			px(ix, y - 10, INK)
+			if int(floorf(t * 2.0)) % 7 == 0:
+				rect(x - 6, y - 14, 13, 5, sc)
+		4:
+			for k in 8:
+				rect(x + k * 3, y - k * 2, 4, 2, mixc(Color("#cfc3ee"), NIGHT, n * 0.4))
+				rect(x + k * 3, y - k * 2 + 2, 4, 1, Color("#8c7fc0"))
+		5:
+			var c := mixc(Color("#f4f1ff"), Color("#2c2560"), n * 0.6)
+			ell(x, y, 12, 5, c)
+			ell(x + 10, y - 1, 4, 3, c)
+			rect(x + 13, y - 5, 2, 3, c)
+			rect(x + 15, y - 7, 3, 2, c)
+			px(x - 7, y - 1, INK)
+			if int(floorf(t * 3.0)) % 2 == 1:
+				px(x - 8, y - 7, Color("#bfe6ff"))
+				px(x - 9, y - 9, Color("#bfe6ff"))
+				px(x - 7, y - 10, Color("#bfe6ff"))
+
+
+func toy_x(k: int) -> float:
+	return 16.0 + float((k * 29) % 72)
+
+
+func draw_places(night: float, front: bool) -> void:
+	var cnt := mini(S["places"].size(), 6)
+	for i in cnt:
+		var sl: Array = SLOTS[i]
+		if sl[2] == front:
+			continue
+		var yy: float = sl[1] + (roundf(sin(t * 0.8 + i) * 2.0) if sl[2] else 1.0)
+		draw_lm(i, sl[0], yy, night)
+
+
+# --------------------------------------------------------------- events
+func now() -> float:
+	return Time.get_ticks_msec() / 1000.0
+
+
+func on_step(n: int = 1) -> void:
+	S["steps"] += n
+	S["xp"]["exp"] += 0.02 * n
+	need("hun", 0.02 * n)
+	wake_from_neglect()
+	step_acc += n
+	while step_acc >= 50.0:
+		step_acc -= 50.0
+		if S["stage"] != "egg":
+			spawn_food()
+
+
+func on_shake() -> void:
+	if S["stage"] == "egg":
+		egg_shake = 1.0
+		return
+	startle = 1.2
+	S["xp"]["che"] += 5.0
+	need("cur", 2)
+	wake = 20.0
+	boing()
+	toast("Whoa! That startled it.")
+
+
+func on_loud() -> void:
+	if S["stage"] == "egg":
+		egg_shake = 1.0
+		return
+	startle = 1.4
+	S["xp"]["che"] += 3.0
+	wake = 20.0
+	sfx(90, 0.25, "sawtooth", 0.06, -30)
+	toast("That was loud.")
+
+
+func on_new_place(key: String) -> void:
+	S["places"].append(key)
+	need("cur", 30)
+	S["xp"]["exp"] += 20.0
+	excited = 3.0
+	burst(54, 70, 14, [Color("#fff7a0"), Color("#ff9ad9"), Color("#8bf0ff")], 40.0)
+	sfx(660, 0.15, "square", 0.04, 220)
+	get_tree().create_timer(0.14).timeout.connect(func(): sfx(990, 0.2, "square", 0.04, 0))
+	toast("A new place. Something appeared in its world." if S["places"].size() <= 6 else "A new place. It found a toy.")
+	save_state()
+
+
+func on_colour(c: Color) -> void:
+	need("cur", 8)
+	tint = c
+	tint_t = 5.0
+	excited = maxf(excited, 1.5)
+	var hx := "#" + c.to_html(false)
+	if not S["collection"].has(hx):
+		S["collection"].append(hx)
+		if S["collection"].size() > 12:
+			S["collection"].pop_front()
+	chirp()
+	toast("It likes that colour.")
+
+
+func on_face() -> void:
+	var n := now()
+	if n - face_last < 5.0:
+		return
+	face_last = n
+	S["faces"] += 1
+	watch = 5.0
+	wake = 20.0
+	if S["faces"] >= 5:
+		happy = 3.0
+		excited = 1.2
+		chirp()
+		toast("It knows that face.")
+	else:
+		toast("It is looking at you.")
+
+
+func copy_back(contour: Array) -> void:
+	var stp := maxi(1, contour.size() / 9)
+	var notes: Array = []
+	for i in contour.size():
+		if i % stp == 0 and notes.size() < 9:
+			notes.append(contour[i])
+	sing = notes.size() * 0.11 + 0.4
+	dance = maxf(dance, 0.5)
+	for i in notes.size():
+		var f: float = clampf(notes[i] * 1.6, 300.0, 2000.0)
+		get_tree().create_timer(0.25 + i * 0.11).timeout.connect(func(): sfx(f, 0.1, "triangle", 0.06, 0))
+	var i := 0
+	while i < notes.size():
+		get_tree().create_timer(0.25 + i * 0.11).timeout.connect(func(): add_part("note", pet_x + rnd(-8, 8), GROUND - 28, rnd(-3, 3), -16, 1.3, Color("#8bf0ff")))
+		i += 2
+	need("cur", 3)
+	toast("It copied what it heard.")
+
+
+# ---------------------------------------------------------- permissions
+func has_perm(p: String) -> bool:
+	if not OS.has_feature("android"):
+		return true
+	return ("android.permission." + p) in OS.get_granted_permissions()
+
+
+func ask_perm(p: String, cb: Callable) -> void:
+	if has_perm(p):
+		cb.call(true)
+		return
+	perm_wait[p] = cb
+	OS.request_permission(p)
+
+
+func on_perm_result(permission: String, granted: bool) -> void:
+	for k in perm_wait.keys():
+		if permission.ends_with(k):
+			var cb: Callable = perm_wait[k]
+			perm_wait.erase(k)
+			cb.call(granted)
+
+
+func set_status(name: String, text: String) -> void:
+	if status_labels.has(name):
+		status_labels[name].text = text
+		var bad := text.contains("blocked") or text.contains("unavailable") or text.contains("no ")
+		status_labels[name].add_theme_color_override("font_color", Color("#7be0a8") if text.begins_with("on") else (Color("#ff9170") if bad else Color("#a99fd0")))
+
+
+func mark_sensor(k: String, v: bool) -> void:
+	S["sens"][k] = v
+
+
+# --------------------------------------------------------------- motion
+func motion_frame() -> void:
+	var a := Input.get_accelerometer()
+	if a == Vector3.ZERO:
+		return
+	if not m_got:
+		m_got = true
+		set_status("motion", "on")
+	var mag := a.length()
+	if mag > 3.0:
+		m_tilt += (rad_to_deg(acos(clampf(absf(a.z) / mag, 0.0, 1.0))) - m_tilt) * 0.1
+	m_ema += (mag - m_ema) * 0.05
+	var d := mag - m_ema
+	var tms := Time.get_ticks_msec()
+	if absf(d) > 16.0:
+		m_spikes = m_spikes.filter(func(s): return tms - s < 900)
+		m_spikes.append(tms)
+		if m_spikes.size() >= 3 and tms - m_last_shake > 1500:
+			m_last_shake = tms
+			m_spikes.clear()
+			on_shake()
+		return
+	if d > 2.2 and tms - m_last_step > 320:
+		m_last_step = tms
+		on_step(1)
+
+
+func enable_motion() -> void:
+	mark_sensor("motion", true)
+	set_status("motion", "waiting")
+	get_tree().create_timer(2.5).timeout.connect(func(): if not m_got: set_status("motion", "no data (needs a real phone)"))
+
+
+# ------------------------------------------------------------------ mic
+func enable_mic() -> void:
+	if mic_on:
+		return
+	set_status("mic", "asking")
+	ask_perm("RECORD_AUDIO", func(ok: bool):
+		if not ok:
+			set_status("mic", "blocked")
+			return
+		start_mic())
+
+
+func start_mic() -> void:
+	var idx := AudioServer.get_bus_index("Mic")
+	if idx < 0:
+		idx = AudioServer.bus_count
+		AudioServer.add_bus(idx)
+		AudioServer.set_bus_name(idx, "Mic")
+		mic_cap = AudioEffectCapture.new()
+		AudioServer.add_bus_effect(idx, mic_cap)
+		AudioServer.set_bus_mute(idx, true)
+	else:
+		mic_cap = AudioServer.get_bus_effect(idx, 0)
+	if mic_player == null:
+		mic_player = AudioStreamPlayer.new()
+		mic_player.stream = AudioStreamMicrophone.new()
+		mic_player.bus = "Mic"
+		add_child(mic_player)
+	mic_player.play()
+	mic_on = true
+	mark_sensor("mic", true)
+	set_status("mic", "on")
+
+
+func peak_freq(buf: PackedFloat32Array, rate: float) -> float:
+	var n := buf.size()
+	var min_lag := int(rate / 1600.0)
+	var max_lag := mini(int(rate / 150.0), n / 2)
+	var e0 := 0.0
+	for i in n - max_lag:
+		e0 += buf[i] * buf[i]
+	if e0 < 0.0001:
+		return 0.0
+	var best := 0.0
+	var best_lag := 0
+	for lag in range(min_lag, max_lag):
+		var s := 0.0
+		for i in range(0, n - max_lag, 2):
+			s += buf[i] * buf[i + lag]
+		if s > best:
+			best = s
+			best_lag = lag
+	if best_lag == 0 or best < e0 * 0.5 * 0.5:
+		return 0.0
+	return rate / best_lag
+
+
+func mic_frame(dt: float) -> void:
+	if not mic_on or mic_cap == null:
+		return
+	var avail := mic_cap.get_frames_available()
+	if avail <= 0:
+		return
+	var frames := mic_cap.get_buffer(avail)
+	if sing > 0.0:
+		return
+	var take := mini(frames.size(), 1024)
+	var buf := PackedFloat32Array()
+	buf.resize(take)
+	var s := 0.0
+	for i in take:
+		var v: float = frames[frames.size() - take + i].x
+		buf[i] = v
+		s += v * v
+	var lvl := sqrt(s / maxf(1.0, take))
+	mic_lvl = lvl
+	mic_base += (minf(lvl, 0.1) - mic_base) * 0.01
+	if lvl > 0.45 and lvl > mic_base * 4.0 and t - mic_last_loud > 1.5:
+		mic_last_loud = t
+		on_loud()
+		return
+	if lvl > 0.06 and lvl <= 0.45:
+		mic_quiet = 0.0
+		mic_voice += dt
+		dance = 0.5
+		wake = 15.0
+		if t - mic_last_samp > 0.08:
+			mic_last_samp = t
+			var f := peak_freq(buf, AudioServer.get_mix_rate())
+			if f > 150.0 and f < 1600.0:
+				mic_contour.append(f)
+				if mic_contour.size() > 40:
+					mic_contour.pop_front()
+	else:
+		mic_quiet += dt
+		if mic_quiet > 0.7:
+			if mic_voice > 0.5 and mic_contour.size() >= 5:
+				copy_back(mic_contour.duplicate())
+			mic_voice = 0.0
+			mic_contour.clear()
+
+
+# ------------------------------------------------------------- location
+func enable_geo() -> void:
+	if geo_on:
+		return
+	set_status("geo", "asking")
+	ask_perm("ACCESS_FINE_LOCATION", func(ok: bool):
+		if not ok:
+			set_status("geo", "blocked")
+			return
+		start_geo())
+
+
+func start_geo() -> void:
+	if not OS.has_feature("android") or not Engine.has_singleton("AndroidRuntime"):
+		set_status("geo", "unavailable here")
+		return
+	var rt = Engine.get_singleton("AndroidRuntime")
+	geo_cls = JavaClassWrapper.wrap("com.pierrejoshua.digivi.Native")
+	if geo_cls == null:
+		set_status("geo", "unavailable (helper missing)")
+		return
+	var r = geo_cls.startLocation(rt.getActivity())
+	if str(r) == "ok":
+		geo_on = true
+		mark_sensor("geo", true)
+		set_status("geo", "on (waiting for a fix)")
+	else:
+		set_status("geo", "unavailable: " + str(r))
+
+
+func geo_frame(dt: float) -> void:
+	if not geo_on or geo_cls == null:
+		return
+	geo_t += dt
+	if geo_t < 5.0:
+		return
+	geo_t = 0.0
+	var fix := str(geo_cls.lastFix())
+	if fix == "":
+		return
+	var p := fix.split(",")
+	if p.size() < 3:
+		return
+	set_status("geo", "on")
+	if float(p[2]) > 150.0:
+		return
+	var key := "%d,%d" % [roundi(float(p[0]) * 1000.0), roundi(float(p[1]) * 1000.0)]
+	if not S["places"].has(key):
+		on_new_place(key)
+	cur_place = S["places"].find(key)
+
+
+func place_name(i: int) -> String:
+	if i < 0:
+		return "its island"
+	return "near " + PLACE_NAMES[i] if i < 6 else "a far-off place"
+
+
+# --------------------------------------------------------------- camera
+func quant(raw: PackedByteArray, w: int, h: int) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(w * h * 4)
+	for y in h:
+		for x in w:
+			var i := (y * w + x) * 4
+			var th: float = (BAYER[(y & 3) * 4 + (x & 3)] / 16.0 - 0.5) * 85.0
+			for c in 3:
+				out[i + c] = int(roundf(clampf(raw[i + c] + th, 0.0, 255.0) / 85.0)) * 85
+			out[i + 3] = 255
+	return out
+
+
+func colour_name(r: float, g: float, b: float) -> String:
+	var mx := maxf(r, maxf(g, b))
+	var mn := minf(r, minf(g, b))
+	var l := (mx + mn) / 510.0
+	if mx - mn < 28.0:
+		return "white" if l > 0.8 else ("black" if l < 0.2 else "grey")
+	var d := mx - mn
+	var h := 0.0
+	if mx == r:
+		h = fposmod((g - b) / d, 6.0)
+	elif mx == g:
+		h = (b - r) / d + 2.0
+	else:
+		h = (r - g) / d + 4.0
+	h = fposmod(h * 60.0 + 360.0, 360.0)
+	if h < 15.0 or h >= 335.0:
+		return "pink" if l > 0.7 else "red"
+	if h < 45.0:
+		return "orange"
+	if h < 70.0:
+		return "yellow"
+	if h < 165.0:
+		return "green"
+	if h < 200.0:
+		return "teal"
+	if h < 255.0:
+		return "blue"
+	if h < 290.0:
+		return "purple"
+	return "pink"
+
+
+func sig_of(raw: PackedByteArray) -> PackedFloat32Array:
+	var s := PackedFloat32Array()
+	for cy in 4:
+		for cx in 4:
+			var r := 0.0
+			var g := 0.0
+			var b := 0.0
+			var n := 0.0
+			for y in range(cy * 9, cy * 9 + 9):
+				for x in range(cx * 7, cx * 7 + 7):
+					var i := (y * VW + x) * 4
+					r += raw[i]
+					g += raw[i + 1]
+					b += raw[i + 2]
+					n += 1.0
+			s.append(r / n)
+			s.append(g / n)
+			s.append(b / n)
+	return s
+
+
+func describe(raw: PackedByteArray) -> Dictionary:
+	var w := VW
+	var h := VH
+	var n := w * h
+	var gray := PackedFloat32Array()
+	gray.resize(n)
+	var r := 0.0
+	var g := 0.0
+	var b := 0.0
+	for i in n:
+		var rr: float = raw[i * 4]
+		var gg: float = raw[i * 4 + 1]
+		var bb: float = raw[i * 4 + 2]
+		r += rr
+		g += gg
+		b += bb
+		gray[i] = 0.3 * rr + 0.59 * gg + 0.11 * bb
+	r /= n
+	g /= n
+	b /= n
+	var gx := 0.0
+	var gy := 0.0
+	for y in range(1, h - 1):
+		for x in range(1, w - 1):
+			var i := y * w + x
+			gx += absf(gray[i + 1] - gray[i - 1])
+			gy += absf(gray[i + w] - gray[i - w])
+	var edge := (gx + gy) / float((w - 2) * (h - 2)) / 255.0
+	var pattern := "plain"
+	if edge > 0.16:
+		var ratio := gx / (gy + 1.0)
+		pattern = "stripes" if (ratio > 1.8 or ratio < 0.55) else "busy"
+	var br := 0.0
+	var bg := 0.0
+	var bb2 := 0.0
+	var bn := 0.0
+	var border: Array = []
+	for x in w:
+		border.append(x)
+		border.append((h - 1) * w + x)
+	for y in range(1, h - 1):
+		border.append(y * w)
+		border.append(y * w + w - 1)
+	for idx in border:
+		br += raw[idx * 4]
+		bg += raw[idx * 4 + 1]
+		bb2 += raw[idx * 4 + 2]
+		bn += 1.0
+	br /= bn
+	bg /= bn
+	bb2 /= bn
+	var x0 := w
+	var x1 := -1
+	var y0 := h
+	var y1 := -1
+	var area := 0
+	for y in h:
+		for x in w:
+			var i := (y * w + x) * 4
+			if absf(raw[i] - br) + absf(raw[i + 1] - bg) + absf(raw[i + 2] - bb2) > 70.0:
+				area += 1
+				x0 = mini(x0, x)
+				x1 = maxi(x1, x)
+				y0 = mini(y0, y)
+				y1 = maxi(y1, y)
+	var shape := "none"
+	if area > n * 0.04 and area < n * 0.85:
+		var bw := x1 - x0 + 1
+		var bh := y1 - y0 + 1
+		var fill := float(area) / (bw * bh)
+		var aspect := float(maxi(bw, bh)) / float(mini(bw, bh))
+		shape = "long" if aspect > 1.9 else ("square" if fill > 0.9 else ("round" if fill > 0.68 else "lumpy"))
+	return {"bright": (r + g + b) / 765.0, "col": Color(r / 255.0, g / 255.0, b / 255.0), "col_name": colour_name(r, g, b), "pattern": pattern, "shape": shape}
+
+
+func a_or_an(w: String) -> String:
+	return ("an " if w[0] in "aeiou" else "a ") + w
+
+
+func wanted_facing() -> String:
+	if cam_mode == "back":
+		return "back"
+	if cam_mode == "front":
+		return "front"
+	if not m_got:
+		return "back"
+	if m_tilt >= 60.0:
+		cam_posture = "up"
+	elif m_tilt <= 40.0:
+		cam_posture = "flat"
+	return "front" if cam_posture == "flat" else "back"
+
+
+func can_show() -> bool:
+	var ns := neglect_state()
+	return S["stage"] != "egg" and cer == null and ns != "away" and ns != "lost"
+
+
+func enable_cam() -> void:
+	if cam_on or cam_starting:
+		return
+	cam_starting = true
+	set_status("cam", "asking")
+	ask_perm("CAMERA", func(ok: bool):
+		if not ok:
+			cam_starting = false
+			set_status("cam", "blocked")
+			return
+		start_cam())
+
+
+func start_cam() -> void:
+	CameraServer.monitoring_feeds = true
+	set_status("cam", "looking for cameras")
+	for i in 20:
+		if CameraServer.feeds().size() > 0:
+			break
+		await get_tree().create_timer(0.4).timeout
+	if CameraServer.feeds().is_empty():
+		cam_starting = false
+		set_status("cam", "unavailable (no camera found)")
+		return
+	setup_cam_view()
+	cam_starting = false
+	if open_stream(wanted_facing()):
+		mark_sensor("cam", true)
+
+
+func setup_cam_view() -> void:
+	if cam_vp != null:
+		return
+	cam_vp = SubViewport.new()
+	cam_vp.size = Vector2i(CW, CH)
+	cam_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	cam_vp.transparent_bg = false
+	add_child(cam_vp)
+	var cr := ColorRect.new()
+	cr.size = Vector2(CW, CH)
+	cam_mat = ShaderMaterial.new()
+	var sh := Shader.new()
+	sh.code = CAM_SHADER
+	cam_mat.shader = sh
+	cr.material = cam_mat
+	cam_vp.add_child(cr)
+	vf_tex = ImageTexture.create_from_image(Image.create(VW, VH, false, Image.FORMAT_RGBA8))
+
+
+func pick_format(feed: CameraFeed) -> int:
+	var fm := feed.get_formats()
+	var best := -1
+	var best_score := 1.0e9
+	for i in fm.size():
+		var w: int = fm[i]["width"]
+		var h: int = fm[i]["height"]
+		var nm: String = str(fm[i]["format"])
+		if w < 320 or w > 1000:
+			continue
+		var score := absf(float(w) / h - 1.3333) * 100.0 + absf(w - 640) / 10.0 + (0.0 if nm.begins_with("RGB") else 25.0)
+		if score < best_score:
+			best_score = score
+			best = i
+	if best < 0 and fm.size() > 0:
+		best = 0
+	return best
+
+
+func open_stream(facing: String) -> bool:
+	var want := CameraFeed.FEED_FRONT if facing == "front" else CameraFeed.FEED_BACK
+	var feed: CameraFeed = null
+	for f in CameraServer.feeds():
+		if f.get_position() == want:
+			feed = f
+			break
+	if feed == null:
+		feed = CameraServer.feeds()[0]
+	if cam_feed != null and cam_feed != feed:
+		cam_feed.feed_is_active = false
+	var idx := pick_format(feed)
+	if idx < 0:
+		set_status("cam", "unavailable (no usable format)")
+		return false
+	feed.set_format(idx, {})
+	feed.feed_is_active = true
+	cam_feed = feed
+	cam_facing = facing
+	var t0 := CameraTexture.new()
+	t0.camera_feed_id = feed.get_id()
+	t0.which_feed = CameraServer.FEED_Y_IMAGE
+	var t1 := CameraTexture.new()
+	t1.camera_feed_id = feed.get_id()
+	t1.which_feed = CameraServer.FEED_CBCR_IMAGE
+	cam_mat.set_shader_parameter("tex0", t0)
+	cam_mat.set_shader_parameter("tex1", t1)
+	apply_cam_params()
+	cam_on = true
+	cam_prev = PackedFloat32Array()
+	cam_steady = 0.0
+	set_status("cam", "on (%s)" % ("front, greets faces" if facing == "front" else "back, shows things"))
+	return true
+
+
+func apply_cam_params() -> void:
+	if cam_mat == null or cam_feed == null:
+		return
+	var yc := 1 if cam_feed.get_datatype() == CameraFeed.FEED_YCBCR_SEP else 0
+	cam_mat.set_shader_parameter("ycbcr", yc)
+	cam_mat.set_shader_parameter("rot", cam_rot[cam_facing])
+	cam_mat.set_shader_parameter("mirror", 1 if cam_flip[cam_facing] else 0)
+	var out_ar := float(CW) / CH
+	var src_ar := 0.75
+	var crop := Vector2(1, 1)
+	if src_ar > out_ar:
+		crop.x = out_ar / src_ar
+	else:
+		crop.y = src_ar / out_ar
+	cam_mat.set_shader_parameter("crop", crop)
+
+
+func cam_frame(dt: float) -> void:
+	if not cam_on or cam_vp == null:
+		return
+	var want := wanted_facing()
+	if want != cam_facing:
+		cam_want_t += dt
+		if cam_want_t > 1.5:
+			cam_want_t = 0.0
+			open_stream(want)
+			return
+	else:
+		cam_want_t = 0.0
+	cam_t += dt
+	if cam_t < 0.08:
+		return
+	var step := cam_t
+	cam_t = 0.0
+	if show["freeze"] > 0.0 or taking:
+		return
+	var im := cam_vp.get_texture().get_image()
+	if im == null or im.is_empty():
+		return
+	im.convert(Image.FORMAT_RGBA8)
+	cam_big = im.get_data()
+	if cam_facing == "front":
+		show["steady"] = 0.0
+		vf_ok = false
+		cam_ft += step
+		if cam_ft > 1.0 and can_show():
+			cam_ft = 0.0
+			if geo_cls == null and OS.has_feature("android") and Engine.has_singleton("AndroidRuntime"):
+				geo_cls = JavaClassWrapper.wrap("com.pierrejoshua.digivi.Native")
+			if geo_cls != null and int(geo_cls.faces(cam_big, CW, CH)) > 0:
+				on_face()
+		return
+	var small := im.duplicate()
+	small.resize(VW, VH, Image.INTERPOLATE_BILINEAR)
+	var raw: PackedByteArray = small.get_data()
+	vf_tex.update(Image.create_from_data(VW, VH, false, Image.FORMAT_RGBA8, quant(raw, VW, VH)))
+	vf_ok = true
+	var n := VW * VH
+	var sum := 0.0
+	var diff := 0.0
+	var had := cam_prev.size() == n
+	var cur := PackedFloat32Array()
+	cur.resize(n)
+	for i in n:
+		var l: float = 0.3 * raw[i * 4] + 0.59 * raw[i * 4 + 1] + 0.11 * raw[i * 4 + 2]
+		cur[i] = l
+		sum += l
+		if had:
+			diff += absf(l - cam_prev[i])
+	cam_prev = cur
+	cam_bright = sum / n / 255.0
+	if cam_bright < 0.1:
+		need("ene", 0.005)
+	if had and diff / n < 6.0 and cam_bright > 0.1:
+		cam_steady += step
+	else:
+		cam_steady = 0.0
+	show["steady"] = cam_steady
+	if cam_steady > 1.2 and t - show["last_keep"] > 6.0 and can_show():
+		var sg := sig_of(raw)
+		var dist := 999.0
+		if cam_last_sig.size() == sg.size():
+			dist = 0.0
+			for i in sg.size():
+				dist += absf(sg[i] - cam_last_sig[i])
+		cam_steady = 0.0
+		if dist > 90.0:
+			cam_last_sig = sg
+			show["last_keep"] = t
+			take_in(im, false)
+
+
+func make_sprite(big: Image) -> String:
+	var s := mini(big.get_width(), big.get_height())
+	var crop := big.get_region(Rect2i((big.get_width() - s) / 2, (big.get_height() - s) / 2, s, s))
+	crop.resize(16, 16, Image.INTERPOLATE_BILINEAR)
+	crop.convert(Image.FORMAT_RGBA8)
+	var q := Image.create_from_data(16, 16, false, Image.FORMAT_RGBA8, quant(crop.get_data(), 16, 16))
+	return Marshalls.raw_to_base64(q.save_png_to_buffer())
+
+
+func take_in(big: Image, fake: bool) -> void:
+	if taking:
+		return
+	taking = true
+	show["flash"] = 0.15
+	show["freeze"] = 4.0
+	var small := big.duplicate()
+	small.convert(Image.FORMAT_RGBA8)
+	small.resize(VW, VH, Image.INTERPOLATE_BILINEAR)
+	var info := describe(small.get_data())
+	var sprite := make_sprite(big)
+	react_to_show(info, sprite)
+	taking = false
+	show["freeze"] = minf(show["freeze"], 1.0)
+
+
+func react_to_show(info: Dictionary, sprite: String) -> void:
+	var said := ""
+	var md := "curious"
+	var bubble = null
+	var puzzled := false
+	var stg: String = S["stage"]
+	if stg == "baby":
+		if info["bright"] > 0.72:
+			said = "something very bright"
+			md = "dazzled"
+			startle = 0.7
+		elif info["bright"] < 0.18:
+			said = "something dark"
+			md = "calm"
+		else:
+			said = a_or_an(info["col_name"]) + " colour"
+			md = "delighted"
+			excited = 2.0
+			tint = info["col"]
+			tint_t = 5.0
+		bubble = {"c": info["col"]}
+	else:
+		var key = null
+		if info["pattern"] != "plain":
+			key = info["pattern"]
+		elif info["shape"] != "none":
+			key = info["shape"]
+		if key == null:
+			puzzled = true
+		elif stg == "child":
+			said = {"round": "something round", "square": "something square", "long": "something long", "lumpy": "something lumpy", "stripes": "something stripy", "busy": "something busy"}[key]
+			excited = 1.8
+			bubble = {"icon": {"round": "circle", "long": "line", "lumpy": "blob"}.get(key, key)}
+		else:
+			var shp: String = {"round": "round", "square": "square", "long": "long", "lumpy": "lumpy", "stripes": "stripy", "busy": "busy"}[key]
+			said = "something %s and %s" % [shp, info["col_name"]]
+			md = "pleased"
+			excited = 1.8
+			bubble = {"icon": {"round": "circle", "long": "line", "lumpy": "blob"}.get(key, key)}
+	if puzzled:
+		said = "something it can't make out"
+		md = "puzzled"
+		bubble = {"icon": "qmark", "q": true}
+		show["tilt"] = 1.6
+		show["tilt_dir"] = 1 if randf() < 0.5 else -1
+	show["bubble"] = bubble
+	show["bubble_t"] = 3.4
+	show["flash"] = 0.18
+	show["freeze"] = 1.0
+	wake = 20.0
+	S["shows"] += 1
+	need("cur", 10)
+	S["xp"]["exp"] += 1.0
+	if S["album"].size() >= 80:
+		S["album"].pop_front()
+	S["album"].append({"t": Time.get_unix_time_from_system(), "img": sprite, "place": cur_place, "said": said, "mood": md, "stage": S["stage"]})
+	toast(("It tilts its head. " if puzzled else "It sees ") + said + ".")
+	sfx(300 if puzzled else 700, 0.12, "square", 0.04, -60 if puzzled else 200)
+	save_state()
+	refresh_album()
+
+
+func draw_viewfinder() -> void:
+	var o: float = show["open"]
+	if o < 0.05 or cer != null:
+		return
+	var x0 := 64
+	var y0 := roundi(50 + sin(t * 1.5) * 1.5)
+	var pale := Color("#f4ecff")
+	ga = o
+	rect(x0, y0, 36, 44, INK)
+	rect(x0 + 1, y0 + 1, 34, 42, pale)
+	rect(x0 + 3, y0 + 3, 30, 38, INK)
+	rect(x0 - 1, y0 + 21, 1, 3, pale)
+	rect(x0 - 2, y0 + 22, 1, 1, pale)
+	if vf_ok:
+		draw_texture(vf_tex, Vector2(x0 + 4, y0 + 4), Color(1, 1, 1, o))
+	else:
+		rect(x0 + 4, y0 + 4, 28, 36, Color("#2a2450"))
+	if show["flash"] > 0.0:
+		ga = o * minf(1.0, show["flash"] / 0.15)
+		rect(x0 + 4, y0 + 4, 28, 36, Color.WHITE)
+	ga = o
+	var sw := roundi(28.0 * minf(1.0, show["steady"] / 1.2))
+	if sw > 0:
+		rect(x0 + 4, y0 + 41, sw, 1, Color("#ff9a3c"))
+	ga = 1.0
+
+
+func draw_bubble() -> void:
+	var b = show["bubble"]
+	if b == null or show["bubble_t"] <= 0.0 or not has_bbox:
+		return
+	ga = minf(1.0, show["bubble_t"] / 0.4)
+	var bx := clampf(roundf(bbox.position.x + bbox.size.x / 2.0) - 7.0, 2.0, W - 17.0)
+	var by := maxf(2.0, bbox.position.y - 19.0)
+	rect(bx + 1, by, 13, 15, INK)
+	rect(bx, by + 1, 15, 13, INK)
+	rect(bx + 1, by + 1, 13, 13, Color.WHITE)
+	rect(bx + 6, by + 15, 3, 1, INK)
+	rect(bx + 7, by + 16, 1, 1, INK)
+	px(bx + 7, by + 15, Color.WHITE)
+	if b.has("c"):
+		var c: Color = b["c"]
+		rect(bx + 4, by + 4, 7, 7, INK)
+		rect(bx + 5, by + 5, 5, 5, c)
+		px(bx + 5, by + 5, mixc(c, Color.WHITE, 0.6))
+	else:
+		bitmap(bx + 4, by + 4, ICONS.get(b["icon"], ICONS["qmark"]), INK)
+	if b.has("q"):
+		bitmap(bx + 11, by + 1, QM, Color("#ff5a6e"))
+	ga = 1.0
+
+
+func fake_show() -> void:
+	var im := Image.create(CW, CH, false, Image.FORMAT_RGBA8)
+	var base := Color.from_hsv(randf(), 0.4, 0.8)
+	im.fill(base)
+	var fg := Color.from_hsv(fposmod(base.h + 0.4, 1.0), 0.8, 0.6)
+	if randf() < 0.5:
+		for y in CH:
+			for x in CW:
+				if Vector2(x - 48, y - 60).length() < 28:
+					im.set_pixel(x, y, fg)
+	else:
+		im.fill_rect(Rect2i(24, 25, 48, 70), fg)
+	take_in(im, true)
+
+
+# ------------------------------------------------------------ album UI
+func refresh_album() -> void:
+	if album_grid == null:
+		return
+	for c in album_grid.get_children():
+		c.queue_free()
+	album_empty.visible = S["album"].is_empty()
+	for i in range(S["album"].size() - 1, -1, -1):
+		var e: Dictionary = S["album"][i]
+		var b := TextureButton.new()
+		b.texture_normal = entry_tex(e)
+		b.custom_minimum_size = Vector2(20, 20)
+		b.ignore_texture_size = true
+		b.stretch_mode = TextureButton.STRETCH_SCALE
+		b.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		b.pressed.connect(func(): show_detail(e))
+		album_grid.add_child(b)
+
+
+func entry_tex(e: Dictionary) -> ImageTexture:
+	var im := Image.new()
+	im.load_png_from_buffer(Marshalls.base64_to_raw(e["img"]))
+	return ImageTexture.create_from_image(im)
+
+
+func show_detail(e: Dictionary) -> void:
+	album_detail.visible = true
+	album_detail_img.texture = entry_tex(e)
+	var d := Time.get_datetime_dict_from_unix_time(int(e["t"]) + int(Time.get_time_zone_from_system()["bias"]) * 60)
+	var said: String = e["said"]
+	album_detail_l.text = "%s\n%02d/%02d %02d:%02d\nSeen %s\nIt felt %s" % [said.substr(0, 1).to_upper() + said.substr(1), d["day"], d["month"], d["hour"], d["minute"], place_name(int(e["place"])), e["mood"]]
+
+
+# -------------------------------------------------------- sensor/album UI
+func small_btn(text: String, pos: Vector2, size: Vector2, fs: int, cb: Callable, parent: Node) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.add_theme_font_size_override("font_size", fs)
+	b.pressed.connect(cb)
+	parent.add_child(b)
+	b.position = pos
+	b.size = size
+	return b
+
+
+func small_label(text: String, pos: Vector2, size: Vector2, fs: int, parent: Node) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", fs)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(l)
+	l.position = pos
+	l.size = size
+	return l
+
+
+func build_sensor_ui(ui: CanvasLayer) -> void:
+	small_btn("sns", Vector2(2, 2), Vector2(20, 9), 5, func(): toggle_panel(sens_panel), ui).flat = true
+	small_btn("alb", Vector2(24, 2), Vector2(20, 9), 5, func(): toggle_panel(album_panel), ui).flat = true
+	sens_panel = Panel.new()
+	sens_panel.position = Vector2(3, 14)
+	sens_panel.size = Vector2(102, 152)
+	sens_panel.visible = false
+	ui.add_child(sens_panel)
+	var rows := [["motion", "Motion", "steps, shaking", enable_motion], ["mic", "Microphone", "noise, voice", enable_mic], ["cam", "Camera", "show it things", enable_cam], ["geo", "Location", "new places", enable_geo]]
+	var y := 3.0
+	for r in rows:
+		small_label(r[1], Vector2(3, y), Vector2(50, 7), 6, sens_panel)
+		status_labels[r[0]] = small_label("off", Vector2(3, y + 7), Vector2(66, 12), 5, sens_panel)
+		small_btn("Enable", Vector2(70, y + 2), Vector2(28, 11), 5, r[3], sens_panel)
+		y += 20.0
+	small_label("Camera view", Vector2(3, y), Vector2(60, 7), 6, sens_panel)
+	var vx := 3.0
+	for m in ["auto", "back", "front"]:
+		small_btn(m.capitalize(), Vector2(vx, y + 8), Vector2(24, 10), 5, func(): cam_mode = m, sens_panel)
+		vx += 26.0
+	small_btn("Rotate", Vector2(3, y + 28), Vector2(32, 10), 5, func():
+		cam_rot[cam_facing] = (cam_rot[cam_facing] + 1) % 4
+		apply_cam_params(), sens_panel)
+	small_btn("Flip", Vector2(37, y + 28), Vector2(24, 10), 5, func():
+		cam_flip[cam_facing] = not cam_flip[cam_facing]
+		apply_cam_params(), sens_panel)
+	stats_l = small_label("", Vector2(3, y + 46), Vector2(96, 22), 4, sens_panel)
+	set_status("motion", "off")
+
+	album_panel = Panel.new()
+	album_panel.position = Vector2(3, 14)
+	album_panel.size = Vector2(102, 150)
+	album_panel.visible = false
+	ui.add_child(album_panel)
+	small_label("Things it has seen", Vector2(3, 3), Vector2(96, 8), 6, album_panel)
+	album_empty = small_label("Nothing yet. Enable the camera and hold something steady in front of the back camera.", Vector2(3, 14), Vector2(96, 30), 5, album_panel)
+	var sc := ScrollContainer.new()
+	sc.position = Vector2(3, 14)
+	sc.size = Vector2(96, 132)
+	album_panel.add_child(sc)
+	album_grid = GridContainer.new()
+	album_grid.columns = 4
+	album_grid.add_theme_constant_override("h_separation", 2)
+	album_grid.add_theme_constant_override("v_separation", 2)
+	sc.add_child(album_grid)
+	album_detail = Panel.new()
+	album_detail.position = Vector2(2, 14)
+	album_detail.size = Vector2(98, 70)
+	album_detail.visible = false
+	album_panel.add_child(album_detail)
+	album_detail_img = TextureRect.new()
+	album_detail_img.position = Vector2(4, 4)
+	album_detail_img.size = Vector2(40, 40)
+	album_detail_img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	album_detail_img.stretch_mode = TextureRect.STRETCH_SCALE
+	album_detail_img.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	album_detail.add_child(album_detail_img)
+	album_detail_l = small_label("", Vector2(48, 3), Vector2(48, 50), 5, album_detail)
+	small_btn("Close", Vector2(33, 54), Vector2(32, 11), 5, func(): album_detail.visible = false, album_detail)
+	refresh_album()
+
+
+func toggle_panel(p: Panel) -> void:
+	var was := p.visible
+	sens_panel.visible = false
+	album_panel.visible = false
+	album_detail.visible = false
+	p.visible = not was
+
+
+func update_stats() -> void:
+	if sens_panel != null and sens_panel.visible:
+		stats_l.text = "steps %d  places %d  faces %d\ncamera %s  tilt %d  shown %d\nmic %.2f" % [S["steps"], S["places"].size(), S["faces"], (cam_facing if cam_on else "off"), int(m_tilt), S["shows"], mic_lvl]
 
 
 # ---------------------------------------------------------------- growth
@@ -832,7 +2008,9 @@ func start_hatch() -> void:
 
 
 func new_egg() -> void:
+	var keep: Array = S["places"]
 	S = fresh()
+	S["places"] = keep
 	namer_shown = false
 	dbg_neglect = ""
 	food.clear()
@@ -858,7 +2036,15 @@ func update_pet(dt: float) -> void:
 		act = "rest"
 		return
 	var busy := dance > 0.0 or startle > 0.0
-	if not busy:
+	if show["open"] > 0.5 or show["bubble_t"] > 0.0:
+		pet_tx = 30.0
+		act = "watch"
+		look_x = 1.0
+	elif watch > 0.0:
+		pet_tx = 54.0
+		act = "watch"
+		look_x = 0.0
+	elif not busy:
 		act_t -= dt
 		var landed = null
 		for f in food:
@@ -878,7 +2064,10 @@ func update_pet(dt: float) -> void:
 		elif act_t <= 0.0:
 			act_t = rnd(2.5, 6.0)
 			var r := randf()
-			if r < 0.75:
+			if S["places"].size() > 0 and r < 0.25:
+				act = "toy"
+				pet_tx = toy_x(randi() % S["places"].size())
+			elif r < 0.75:
 				act = "wander"
 				pet_tx = rnd(22, 86)
 			else:
@@ -894,7 +2083,7 @@ func update_pet(dt: float) -> void:
 func _process(dt: float) -> void:
 	dt = minf(dt, 0.05)
 	t += dt
-	for k in ["startle", "happy", "excited", "dance", "wake", "funny", "egg_shake"]:
+	for k in ["startle", "happy", "excited", "dance", "wake", "funny", "egg_shake", "sing", "watch", "tint_t"]:
 		if get(k) > 0.0:
 			set(k, maxf(0.0, get(k) - dt))
 	squish += (1.0 - squish) * minf(1.0, dt * 8.0)
@@ -902,6 +2091,18 @@ func _process(dt: float) -> void:
 		squish = 1.0 + 0.22 * sin(t * 14.0) * (funny / 2.2)
 	look_x *= 0.9
 	update_parts(dt)
+	for k in ["flash", "freeze", "bubble_t", "tilt"]:
+		if show[k] > 0.0:
+			show[k] = maxf(0.0, show[k] - dt)
+	var want_open := 1.0 if (cam_on and cam_facing == "back" and can_show()) else 0.0
+	show["open"] += (want_open - show["open"]) * minf(1.0, dt * 6.0)
+	if want_open == 0.0 and show["open"] < 0.02:
+		show["open"] = 0.0
+		vf_ok = false
+	if cer == null:
+		mic_frame(dt)
+		cam_frame(dt)
+		geo_frame(dt)
 	for fd in food:
 		fd["y"] = minf(GROUND + 4.0, fd["y"] + 70.0 * dt)
 	if cer != null:
@@ -928,9 +2129,15 @@ func _process(dt: float) -> void:
 		if toast_t <= 0.0:
 			toast_l.modulate.a = 0.0
 	update_hud()
+	update_stats()
 	queue_redraw()
 	if shot_dir != "":
 		shot_tick()
+
+
+func _physics_process(_dt: float) -> void:
+	if S.get("sens", {}).get("motion", true):
+		motion_frame()
 
 
 func _draw() -> void:
@@ -948,7 +2155,9 @@ func _draw() -> void:
 		ell(54, GROUND, 12, 2, Color("#a07a4a"))
 	if S["stage"] != "egg" and (is_sleeping() or ns == "dormant") and randf() < 0.01:
 		add_part("z", pet_x + 8, GROUND - 24, 4, -8, 1.8)
+	draw_viewfinder()
 	draw_parts()
+	draw_bubble()
 
 
 # ----------------------------------------------------------------- input
@@ -1050,6 +2259,8 @@ func build_ui() -> void:
 	name_go.pressed.connect(submit_name)
 	namer.add_child(name_go)
 
+	build_sensor_ui(ui)
+
 	# debug panel
 	var db := Button.new()
 	db.text = "dbg"
@@ -1066,6 +2277,14 @@ func build_ui() -> void:
 	dbg_panel.add_child(vb)
 	var items := [
 		["Drop food", func(): spawn_food()],
+		["+100 steps", func(): on_step(100)],
+		["Shake", func(): on_shake()],
+		["Loud noise", func(): on_loud()],
+		["Sing to it", func(): sing_debug()],
+		["Show a colour", func(): on_colour(Color.from_hsv(randf(), 0.7, 0.9))],
+		["It sees a face", func(): face_last = -99.0; on_face()],
+		["New place", func(): on_new_place("dbg%d" % randi())],
+		["Show it something", func(): if S["stage"] == "egg": toast("Hatch it first.") else: fake_show()],
 		["Hatch now", func(): if S["stage"] == "egg": start_hatch()],
 		["Grow: child", func(): force_stage("child", "")],
 		["Adult: explorer", func(): force_stage("adult", "exp")],
@@ -1092,6 +2311,16 @@ func build_ui() -> void:
 		b.pressed.connect(it[1])
 		vb.add_child(b)
 	db.pressed.connect(func(): dbg_panel.visible = not dbg_panel.visible)
+	var th := make_theme()
+	for c in ui.get_children():
+		if c is Control:
+			c.theme = th
+
+
+func sing_debug() -> void:
+	dance = 1.2
+	wake = 15.0
+	get_tree().create_timer(1.1).timeout.connect(func(): copy_back([300, 340, 380, 340, 300, 420, 460, 420]))
 
 
 func set_needs(v: float) -> void:
@@ -1101,6 +2330,38 @@ func set_needs(v: float) -> void:
 		S["needs"]["ene"] = 100.0
 		S["neglectH"] = 0.0
 		dbg_neglect = ""
+
+
+func make_theme() -> Theme:
+	var th := Theme.new()
+	var states := {"normal": Color("#2a2450"), "hover": Color("#3a3270"), "pressed": Color("#ffcf5a"), "disabled": Color("#1d1940")}
+	for k in states:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = states[k]
+		sb.set_border_width_all(1)
+		sb.border_color = Color("#4a3f8a")
+		sb.content_margin_left = 2
+		sb.content_margin_right = 2
+		sb.content_margin_top = 1
+		sb.content_margin_bottom = 1
+		th.set_stylebox(k, "Button", sb)
+	th.set_color("font_color", "Button", Color("#f4ecff"))
+	th.set_color("font_pressed_color", "Button", Color("#241a05"))
+	var pb := StyleBoxFlat.new()
+	pb.bg_color = Color("#1d1940")
+	pb.set_border_width_all(1)
+	pb.border_color = Color("#4a3f8a")
+	th.set_stylebox("panel", "Panel", pb)
+	th.set_stylebox("panel", "PanelContainer", pb)
+	var le := StyleBoxFlat.new()
+	le.bg_color = Color("#120f26")
+	le.set_border_width_all(1)
+	le.border_color = Color("#4a3f8a")
+	le.content_margin_left = 2
+	le.content_margin_right = 2
+	th.set_stylebox("normal", "LineEdit", le)
+	th.set_stylebox("focus", "LineEdit", le)
+	return th
 
 
 func show_namer() -> void:
@@ -1154,18 +2415,30 @@ var shot_n := 0
 func shot_tick() -> void:
 	shot_n += 1
 	match shot_n:
-		10: force_stage("child", "")
-		40: save_shot("cer")
-		220: save_shot("child")
-		221: force_stage("adult", "exp")
-		420: save_shot("exp")
-		421: force_stage("adult", "cud")
-		620: save_shot("cud")
-		621: force_stage("adult", "che")
-		820: save_shot("che")
-		821: force_stage("adult", "slp")
-		1020: save_shot("slp")
-		1021: get_tree().quit()
+		5: start_hatch()
+		40: S["name"] = "Pip"; namer.visible = false; namer_shown = true
+		60: for i in 6: on_new_place("t%d" % i)
+		100: save_shot("places")
+		101: fake_show()
+		130: save_shot("baby_show")
+		131: sing_debug()
+		200: save_shot("sing")
+		201: force_stage("child", "")
+		400: fake_show()
+		430: save_shot("child_show")
+		431: force_stage("adult", "exp")
+		640: fake_show()
+		670: save_shot("adult_show")
+		671: toggle_panel(sens_panel)
+		680: save_shot("sensors")
+		681: toggle_panel(album_panel)
+		690: save_shot("album")
+		691: show_detail(S["album"][0])
+		700: save_shot("detail")
+		701: on_step(100); on_shake()
+		730: save_shot("shake")
+		731: print("album=", S["album"].size(), " shows=", S["shows"], " steps=", S["steps"])
+		732: get_tree().quit()
 
 
 func save_shot(n: String) -> void:
@@ -1188,6 +2461,14 @@ func _ready() -> void:
 	if S["name"] != "":
 		namer_shown = true
 	get_tree().root.focus_exited.connect(save_state)
+	get_tree().on_request_permissions_result.connect(on_perm_result)
+	enable_motion()
+	if S["sens"].get("mic", false):
+		enable_mic()
+	if S["sens"].get("geo", false):
+		enable_geo()
+	if S["sens"].get("cam", false):
+		enable_cam()
 
 
 func _notification(what: int) -> void:
