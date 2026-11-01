@@ -218,6 +218,14 @@ var toast_l: Label
 var toast_t := 0.0
 var new_egg_b: Button
 var namer: Panel
+var ui_layer: CanvasLayer
+const IDLE_AFTER := 60.0
+const IDLE_FPS := 3
+var idle := false
+var idle_t := 0.0
+var idle_cam := false
+var idle_prev_a := Vector3.ZERO
+var wake_guard := 0
 var name_edit: LineEdit
 var name_go: Button
 var dbg_panel: PanelContainer
@@ -2465,8 +2473,83 @@ func update_pet(dt: float) -> void:
 			pet_dir = signf(dx)
 
 
+func enter_idle() -> void:
+	idle = true
+	idle_prev_a = Vector3.ZERO
+	Engine.max_fps = IDLE_FPS
+	ui_layer.visible = false
+	sens_panel.visible = false
+	album_panel.visible = false
+	upd_panel.visible = false
+	idle_cam = cam_on
+	if cam_on and cam_feed != null:
+		cam_feed.feed_is_active = false
+		cam_on = false
+	show["open"] = 0.0
+	vf_ok = false
+	if mic_player != null:
+		mic_player.stop()
+
+
+func wake_up() -> void:
+	idle = false
+	idle_t = 0.0
+	wake_guard = Time.get_ticks_msec() + 350
+	Engine.max_fps = 30
+	ui_layer.visible = true
+	if mic_player != null and mic_on:
+		mic_player.play()
+	if idle_cam:
+		idle_cam = false
+		open_stream(wanted_facing())
+	squish = 1.2
+
+
+func idle_process(dt: float) -> void:
+	t += dt
+	if cer != null or namer.visible:
+		wake_up()
+		return
+	var a := Input.get_accelerometer()
+	if a != Vector3.ZERO:
+		if idle_prev_a != Vector3.ZERO and (a - idle_prev_a).length() > 2.5:
+			wake_up()
+			return
+		idle_prev_a = a
+	svc_t += dt
+	if svc_t > 1.0:
+		svc_t = 0.0
+		apply_pending()
+	acc += dt
+	while acc >= 1.0:
+		acc -= 1.0
+		tick_1s()
+	save_acc += dt
+	if save_acc > 10.0:
+		save_acc = 0.0
+		save_state()
+	queue_redraw()
+
+
+func _input(e: InputEvent) -> void:
+	if e is InputEventScreenTouch or e is InputEventScreenDrag or e is InputEventMouseButton or e is InputEventMouseMotion or e is InputEventKey:
+		if idle or Time.get_ticks_msec() < wake_guard:
+			if idle:
+				wake_up()
+			get_viewport().set_input_as_handled()
+			return
+		idle_t = 0.0
+
+
 func _process(dt: float) -> void:
+	if idle:
+		idle_process(minf(dt, 1.0))
+		return
 	dt = minf(dt, 0.05)
+	idle_t += dt
+	if idle_t > IDLE_AFTER and cer == null and not namer.visible and shot_dir == "":
+		enter_idle()
+		return
 	t += dt
 	for k in ["startle", "happy", "excited", "dance", "wake", "funny", "egg_shake", "sing", "watch", "tint_t"]:
 		if get(k) > 0.0:
@@ -2541,15 +2624,17 @@ func _draw() -> void:
 	elif ns != "away" and ns != "lost":
 		var dormant := ns == "dormant"
 		var fm: String = FORM.get(S.get("form", ""), "") if S["stage"] == "adult" else ""
-		draw_pet(S["stage"], fm, pet_x, GROUND + 1, 0.82 if dormant else squish, dormant, dormant or is_sleeping())
+		draw_pet(S["stage"], fm, pet_x, GROUND + 1, 0.82 if dormant else squish, dormant, dormant or is_sleeping() or idle)
 	elif ns == "lost":
 		ell(54, GROUND + 1, 14, 3, Color("#7a5a3a"))
 		ell(54, GROUND, 12, 2, Color("#a07a4a"))
-	if S["stage"] != "egg" and (is_sleeping() or ns == "dormant") and randf() < 0.01:
+	if S["stage"] != "egg" and (is_sleeping() or ns == "dormant") and not idle and randf() < 0.01:
 		add_part("z", pet_x + 8, GROUND - 24, 4, -8, 1.8)
 	draw_viewfinder()
 	draw_parts()
 	draw_bubble()
+	if idle:
+		draw_rect(Rect2(0, 0, W, H), Color(0, 0, 0, 0.93))
 
 
 # ----------------------------------------------------------------- input
@@ -2600,6 +2685,7 @@ func make_label(size: int, y: float, h: float) -> Label:
 
 func build_ui() -> void:
 	var ui := CanvasLayer.new()
+	ui_layer = ui
 	add_child(ui)
 	title_l = make_label(9, 3, 14)
 	ui.add_child(title_l)
@@ -2868,6 +2954,8 @@ func _notification(what: int) -> void:
 	elif what == NOTIFICATION_APPLICATION_RESUMED:
 		if perm_paused:
 			perm_resumed = true
+		if idle:
+			wake_up()
 		if cam_on:
 			restart_stream()
 		var hrs := clampf((Time.get_unix_time_from_system() - float(S["last"])) / 3600.0, 0.0, 24.0 * 30.0)
