@@ -10,6 +10,7 @@ KS=signing/debug.keystore; [ -f $KS ] || { mkdir -p signing; cp /opt/gd/debug.ke
 OUT=build; rm -rf $OUT/native; mkdir -p $OUT/native/classes $OUT/native/dex
 javac -g:none -source 8 -target 8 -bootclasspath $JAR -d $OUT/native/classes $(find android_native/src -name '*.java') 2>&1 | grep -v "warning" || true
 $BT35/d8 --release --min-api 21 --lib $JAR --output $OUT/native/dex $(find $OUT/native/classes -name '*.class')
+godot --headless --path . --import >/dev/null 2>&1 || true
 godot --headless --path . --export-debug Android $OUT/raw.apk 2>&1 | grep -E "^ERROR|SCRIPT ERROR|Parse Error" || true
 # Add the background service and its permissions to the manifest (Godot's template cannot).
 rm -rf $OUT/ap

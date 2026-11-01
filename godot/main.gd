@@ -278,6 +278,10 @@ var dark_t := 0.0
 var light_started := false
 var play_cls = null
 var ui_layer: CanvasLayer
+var ui_t := 0.0
+var ui_fade := 1.0
+var ui_fade_nodes: Array = []
+const UI_FADE_AFTER := 5.0
 const IDLE_AFTER := 60.0
 const IDLE_FPS := 3
 var idle := false
@@ -579,6 +583,119 @@ func draw_parts() -> void:
 
 
 # --------------------------------------------------------------- scenery
+# ------------------------------------------------------------- hi-res art
+const ArtMeta := preload("res://art/art_meta.gd")
+const ART_NAMES := ["egg", "baby", "child", "explorer", "cuddly", "cheeky", "sleepy", "explorer_wing", "mount_far", "mount_near", "sea_back", "sea_front", "cloud0", "cloud1", "cloud2", "sun"]
+const SKY_SHADER := """
+shader_type canvas_item;
+uniform vec3 top;
+uniform vec3 mid;
+uniform vec3 bot;
+uniform float night;
+uniform float time;
+const vec2 RES = vec2(216.0, 384.0);
+float bayer(vec2 p) {
+	int x = int(mod(p.x, 4.0));
+	int y = int(mod(p.y, 4.0));
+	float m[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+	return m[y * 4 + x] / 16.0;
+}
+float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+void fragment() {
+	vec2 p = floor(UV * RES);
+	float y = UV.y;
+	vec3 c = y < 0.5 ? mix(top, mid, y / 0.5) : mix(mid, bot, (y - 0.5) / 0.5);
+	float d = bayer(p) - 0.5;
+	c = floor(c * 20.0 + d + 0.5) / 20.0;
+	if (night > 0.02) {
+		vec2 g = floor(p / 5.0);
+		float h = hash(g);
+		vec2 cell = mod(p, 5.0);
+		if (h > 0.965 && cell.x < 1.0 && cell.y < 1.0 && y < 0.62) {
+			float tw = 0.55 + 0.45 * sin(time * 1.8 + h * 80.0);
+			c = mix(c, vec3(1.0, 0.97, 0.9), night * tw);
+		}
+		if (h > 0.992 && y < 0.55 && cell.x < 3.0 && cell.y < 1.0) {
+			c = mix(c, vec3(1.0), night * (0.4 + 0.6 * sin(time * 1.2 + h * 40.0) * 0.5 + 0.3));
+		}
+	}
+	COLOR = vec4(c, 1.0);
+}
+"""
+var ART := {}
+var sky_rect: ColorRect
+var sky_mat: ShaderMaterial
+var season_override := ""
+
+
+func load_art() -> void:
+	for n in ART_NAMES:
+		ART[n] = load("res://art/%s.png" % n)
+	for i in 8:
+		ART["moon_%d" % i] = load("res://art/moon_%d.png" % i)
+	for sn in ["spring", "summer", "autumn", "winter"]:
+		ART["island_" + sn] = load("res://art/island_%s.png" % sn)
+		ART["island_small0_" + sn] = load("res://art/island_small0_%s.png" % sn)
+		ART["island_small1_" + sn] = load("res://art/island_small1_%s.png" % sn)
+	sky_mat = ShaderMaterial.new()
+	var sh := Shader.new()
+	sh.code = SKY_SHADER
+	sky_mat.shader = sh
+	sky_rect = ColorRect.new()
+	sky_rect.size = Vector2(W, H)
+	sky_rect.material = sky_mat
+	sky_rect.show_behind_parent = true
+	sky_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(sky_rect)
+
+
+func season_now() -> String:
+	if season_override != "":
+		return season_override
+	var m: int = Time.get_date_dict_from_system()["month"]
+	if m == 12 or m <= 2:
+		return "winter"
+	if m <= 5:
+		return "spring"
+	if m <= 8:
+		return "summer"
+	return "autumn"
+
+
+func moon_index() -> int:
+	var days: float = (Time.get_unix_time_from_system() - 947182440.0) / 86400.0
+	var p: float = fposmod(days, 29.53059) / 29.53059
+	return int(floorf(p * 8.0 + 0.5)) % 8
+
+
+func tx(name: String, pos: Vector2, mod: Color = Color.WHITE, flip: bool = false) -> void:
+	var tex: Texture2D = ART[name]
+	var p := Vector2(roundf(pos.x * 2.0) / 2.0, roundf(pos.y * 2.0) / 2.0)
+	draw_set_transform(p, 0.0, Vector2(-0.5 if flip else 0.5, 0.5))
+	draw_texture(tex, Vector2(-tex.get_width() if flip else 0, 0), mod)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func hr(x: float, y: float, w: float, h: float, c: Color) -> void:
+	if ga < 1.0:
+		c.a *= ga
+	draw_rect(Rect2(x, y, w, h), c)
+
+
+func hbit(rows: Array, x: float, y: float, pal: Dictionary) -> void:
+	for j in rows.size():
+		var r: String = rows[j]
+		var i := 0
+		while i < r.length():
+			var ch := r[i]
+			var k := i
+			while k < r.length() and r[k] == ch:
+				k += 1
+			if pal.has(ch):
+				hr(x + i, y + j, k - i, 1, pal[ch])
+			i = k
+
+
 func draw_island(cx: float, y: float, w: int, gcol: Color, rcol: Color, depth: int, n: float) -> void:
 	var night := Color("#10153a")
 	var gc := mixc(gcol, night, n * 0.55)
@@ -601,39 +718,100 @@ func cloud(x: float, y: float, c: Color) -> void:
 	ell(x + 1, y - 2, 5, 3, c)
 
 
+func hr_units_rect(x: float, y: float, w: float, h: float, c: Color) -> void:
+	draw_rect(Rect2(x, y, w, h), c)
+
+
+func draw_seasonal_air(season: String, n: float, g: float) -> void:
+	if season == "spring" or season == "autumn" or season == "winter":
+		var col := Color("#ffc4dd") if season == "spring" else (Color("#ff9a3c") if season == "autumn" else Color.WHITE)
+		var cnt := 14 if season != "winter" else 22
+		for i in cnt:
+			var sp := 5.0 + (i % 5) * 1.6
+			var yy := fposmod(i * 41.0 + t * sp, float(H) + 10.0) - 6.0
+			var xx := fposmod(i * 29.0 + sin(t * 0.8 + i) * 6.0 + t * 2.0, float(W))
+			ga = 0.45 + 0.4 * (i % 3) / 2.0
+			hr(xx, yy, 1.0, 1.0, col) if season != "winter" else hr(xx, yy, 0.5, 0.5, col)
+		ga = 1.0
+	if n > 0.25 and season != "winter":
+		for i in 9:
+			var fx := 14.0 + (i * 53) % 80 + sin(t * 0.6 + i * 2.1) * 5.0
+			var fy := GROUND - 4.0 - ((i * 37) % 28) + cos(t * 0.5 + i) * 4.0
+			var pulse := 0.5 + 0.5 * sin(t * 2.4 + i * 1.7)
+			ga = n * pulse * 0.35
+			hr(fx - 1.0, fy - 1.0, 2.5, 2.5, Color("#fff7a0"))
+			ga = n * (0.4 + 0.6 * pulse)
+			hr(fx, fy, 0.5, 0.5, Color("#ffffff"))
+		ga = 1.0
+
+
+func glow_now(h: float) -> float:
+	return maxf(0.0, maxf(1.0 - absf(h - 6.6) / 1.7, 1.0 - absf(h - 18.4) / 1.7))
+
+
 func draw_world() -> void:
 	var h := hour_now()
 	var n := nightness(h)
-	if absf(h - sky_stamp) > 0.03 or sky_stamp < 0.0:
-		rebuild_sky(h)
-	draw_texture(sky_tex, Vector2.ZERO)
+	var g := glow_now(h)
 	var cols := sky_at(h)
 	var top: Color = cols[0]
 	var bot: Color = cols[1]
-	if n > 0.15:
-		ga = n
-		for s in stars:
-			if sin(t * 2.0 + s[2]) > -0.5:
-				px(s[0], s[1], Color.WHITE)
-		ga = 1.0
+	var mid := top.lerp(bot, 0.55).lerp(Color(1.0, 0.62, 0.48), g * 0.45)
+	sky_mat.set_shader_parameter("top", Vector3(top.r, top.g, top.b))
+	sky_mat.set_shader_parameter("mid", Vector3(mid.r, mid.g, mid.b))
+	sky_mat.set_shader_parameter("bot", Vector3(bot.r, bot.g, bot.b))
+	sky_mat.set_shader_parameter("night", n)
+	sky_mat.set_shader_parameter("time", t)
+	var tfar := Color.WHITE.lerp(Color(1.0, 0.8, 0.74), g * 0.8).lerp(Color(0.4, 0.45, 0.74), n)
+	var tsea := Color.WHITE.lerp(Color(1.0, 0.84, 0.78), g * 0.8).lerp(Color(0.46, 0.5, 0.8), n)
+	var tisl := Color.WHITE.lerp(Color(1.0, 0.88, 0.8), g * 0.7).lerp(Color(0.56, 0.6, 0.84), n)
+	var season := season_now()
+	# sun and moon
 	var day := h >= 6.0 and h < 18.0
 	var f := (h - 6.0) / 12.0 if day else ((h - 18.0 if h >= 18.0 else h + 6.0) / 12.0)
-	var sx := roundf(10.0 + (W - 20) * f)
-	var sy := roundf(78.0 - sin(PI * f) * 54.0)
+	var sx := 10.0 + (W - 20) * f
+	var sy := 78.0 - sin(PI * f) * 54.0
 	if day:
-		disc(sx, sy, 6, Color("#ffe28a"))
-		disc(sx, sy, 4, Color("#fff6c8"))
+		tx("sun", Vector2(sx - 11, sy - 11), Color.WHITE.lerp(Color(1.0, 0.62, 0.4), g))
 	else:
-		disc(sx, sy, 5, Color("#f2f0ff"))
-		disc(sx + 2, sy - 1, 4, mixc(top, bot, sy / H))
-	var cc := mixc(Color.WHITE, top, n * 0.75)
-	for i in 3:
-		cloud(fposmod(t * (2.5 + i * 1.3) + i * 53.0, W + 40.0) - 20.0, 26 + i * 24, cc)
-	draw_island(12, 110 + sin(t * 0.6) * 2, 9, Color("#7fe0a0"), Color("#7a6aa6"), 7, n)
+		tx("moon_%d" % moon_index(), Vector2(sx - 7.5, sy - 7.5), Color(1, 1, 1, clampf(n * 1.4, 0.0, 1.0)))
+	# shooting star
+	if n > 0.6:
+		var ph := fmod(t, 23.0)
+		if ph < 0.7:
+			var k := ph / 0.7
+			for i in 7:
+				ga = (1.0 - i / 7.0) * (1.0 - k * 0.3)
+				hr((30 + k * 50 - i * 1.5) * 1.0, 20 + k * 22 - i * 0.8, 1.0, 0.5, Color.WHITE)
+			ga = 1.0
+	# drifting sky clouds
+	var ctint := Color.WHITE.lerp(Color(1.0, 0.82, 0.75), g * 0.7).lerp(Color(0.5, 0.55, 0.82), n)
+	var cdefs := [["cloud0", 6.0, 0.0, 22.0], ["cloud1", 3.4, 40.0, 44.0], ["cloud2", 4.4, 80.0, 58.0]]
+	for cd in cdefs:
+		var cxp := fposmod(t * cd[1] + cd[2], W + 60.0) - 40.0
+		tx(cd[0], Vector2(cxp, cd[3]), ctint)
+	# mountains behind the sea of clouds
+	tx("mount_far", Vector2(-6 + sin(t * 0.07) * 1.5, 92), tfar)
+	tx("mount_near", Vector2(-6 - sin(t * 0.09) * 2.0, 106), tfar.lerp(Color(0.9, 0.95, 1.0), 0.0))
+	# cloud sea (two layers scrolling at different speeds)
+	var bx := -fposmod(t * 0.9, float(W))
+	tx("sea_back", Vector2(bx, 126), tsea)
+	tx("sea_back", Vector2(bx + W, 126), tsea)
+	var fx := -fposmod(t * 1.8, float(W))
+	var deep := Color("#a29fdc") * tsea
+	hr_units_rect(0, 186, W, 6, deep)
+	tx("sea_front", Vector2(fx, 129), tsea)
+	tx("sea_front", Vector2(fx + W, 129), tsea)
+	hr_units_rect(0, 189, W, 3, Color("#aeaae2") * tsea)
+	# small islands
+	var ly := 110.0 + sin(t * 0.6) * 2.0
+	var ry2 := 104.0 + sin(t * 0.5 + 2.0) * 2.0
+	tx("island_small0_" + season, Vector2(-1, ly - 9), tisl)
 	draw_windmill()
-	draw_island(98, 104 + sin(t * 0.5 + 2.0) * 2, 8, Color("#7fe0a0"), Color("#7a6aa6"), 6, n)
+	tx("island_small1_" + season, Vector2(85, ry2 - 9), tisl)
+	draw_seasonal_air(season, n, g)
 	draw_places(n, false)
-	draw_island(54, GROUND, 48, Color("#5fcf8a"), Color("#7a6aa6"), 26, n)
+	tx("island_" + season, Vector2(3, GROUND - 15), tisl)
 	draw_places(n, true)
 	for k in S["places"].size():
 		var tx := toy_x(k)
@@ -765,30 +943,135 @@ func draw_face(cx: float, cy: float, rx: float, ry: float, m: String, singing: b
 
 
 func draw_egg(cx: float, gy: float, mc: Color) -> void:
-	var rx := 11
-	var ry := 14
-	var cy := gy - ry - 1
-	var tilt := sin(t * 40.0) * minf(1.0, egg_shake) * 1.8 if egg_shake > 0.0 else sin(t * 1.5) * 0.15
-	var shell := Color("#f4ecff")
-	var shade := Color("#d9ccf0")
-	ell(cx, gy + 1, rx, 2, Color(0, 0, 0, 0.3))
-	for pass_i in 2:
-		var e := 1 if pass_i == 0 else 0
-		for y in range(-ry - e, ry + e + 1):
-			var k := sqrt(maxf(0.0, 1.0 - (y * y) / float((ry + e) * (ry + e))))
-			var w := roundi((rx + e) * k * (0.78 + 0.3 * ((y + ry) / float(2 * ry))))
-			var off := roundi(-tilt * (y / float(ry)) * 3.0)
-			var c := INK if pass_i == 0 else (shade if y > ry * 0.4 else shell)
-			rect(cx - w + off, cy + y, w * 2 + 1, 1, c)
-	var spots := [[-4, -6], [3, -2], [-3, 3], [5, 6]]
+	var meta: Dictionary = ArtMeta.PET["egg"]
+	var tex: Texture2D = ART["egg"]
+	var tilt := sin(t * 40.0) * minf(1.0, egg_shake) * 0.12 if egg_shake > 0.0 else sin(t * 1.5) * 0.015
+	ga = 0.3
+	ell(cx, gy + 1, 11, 2, Color.BLACK)
+	ga = 1.0
+	draw_set_transform(Vector2(cx, gy), tilt, Vector2(0.5, 0.5))
+	draw_texture(tex, Vector2(-meta["ax"], -meta["ay"]), Color.WHITE)
+	var spots := [[-8, -12], [6, -4], [-6, 8], [10, 14]]
 	for i in 4:
-		ga = 0.5 + 0.5 * sin(t * 2.0 + i)
-		disc(cx + spots[i][0], cy + spots[i][1], 1, mc)
+		ga = 0.25 + 0.3 * (0.5 + 0.5 * sin(t * 2.0 + i))
+		hr(meta["ax"] + spots[i][0] - 5 - meta["ax"], 72 + spots[i][1] - 5 - meta["ay"], 10, 10, mc)
 	ga = 1.0
 	var n := mini(CRACK.size(), int(S["taps"]) * 4)
 	for i in n:
-		px(cx + CRACK[i][0], cy + CRACK[i][1], Color("#5a4a86"))
-	bbox = Rect2(cx - rx, cy - ry, rx * 2, ry * 2 + 15)
+		hr(CRACK[i][0] * 2.0, (CRACK[i][1] + 1) * 2.0 - 28.0, 2, 2, Color("#4a3a78"))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	bbox = Rect2(cx - 11, gy - 29, 22, 29)
+	has_bbox = true
+
+
+const EYE_PAL := {"#": Color("#1a1330"), "w": Color.WHITE, "b": Color("#6a5ab8"), "p": Color("#ff8fa6"), "r": Color("#7a2a4a"), "t": Color("#8fd8ff")}
+const EYES := {
+	"open": [".####.", "######", "#ww###", "#ww###", "######", "#####b", ".####."],
+	"closed": ["#....#", ".####."],
+	"happy": ["..##..", ".#..#.", "#....#"],
+	"excited": ["..#..", "#.#.#", ".###.", "#.#.#", "..#.."],
+	"sad": [".####.", "######", "#ww###", "#ww###", "######", "#####b", ".####.", "..t...", "..t..."],
+	"startled": [".#####.", "#wwwww#", "#wwwww#", "#ww##w#", "#wwwww#", "#wwwww#", ".#####."],
+	"dizzy": ["#...#", ".#.#.", "..#..", ".#.#.", "#...#"],
+}
+const MOUTHS := {
+	"happy": ["#....#", ".####."],
+	"calm": ["#..#", ".##."],
+	"excited": [".####.", "######", "#rrrr#", ".#pp#."],
+	"sad": ["..##..", ".#..#."],
+	"startled": [".##.", "#rr#", "#rr#", ".##."],
+	"sleepy": [".##."],
+	"dizzy": ["#.#.#.", ".#.#.#"],
+}
+
+
+func draw_face_hr(ax: float, eye_y: float, dx: float, mouth_y: float, m: String, singing: bool) -> void:
+	var kind: String = {"happy": "happy", "calm": "open", "excited": "excited", "sad": "sad", "sleepy": "closed", "startled": "startled", "dizzy": "dizzy"}.get(m, "open")
+	if int(floorf(t * 10.0)) % 47 == 0 and kind == "open":
+		kind = "closed"
+	var rows: Array = EYES[kind]
+	var ew: int = rows[0].length()
+	var lx := roundf(look_x)
+	for sd in [-1, 1]:
+		var ex: float = ax + sd * dx - ew / 2.0 + (lx if kind in ["open", "sad", "startled"] else 0.0)
+		hbit(rows, roundf(ex), roundf(eye_y - rows.size() / 2.0), EYE_PAL)
+	if m == "sad" or m == "startled":
+		for sd in [-1, 1]:
+			hr(ax + sd * dx - 3.0 + (0.0 if sd < 0 else 0.0), eye_y - 6.0 - (1.0 if m == "sad" else 0.0), 6.0, 1.0, EYE_PAL["#"]) if m == "startled" else hr(ax + sd * dx - 3.0 + sd * -1.0, eye_y - 6.0 + (1.0 if sd < 0 else 0.0), 5.0, 1.0, EYE_PAL["#"])
+	var mk := m
+	if singing:
+		mk = "excited"
+	var mrows: Array = MOUTHS.get(mk, MOUTHS["calm"])
+	hbit(mrows, roundf(ax - mrows[0].length() / 2.0), roundf(mouth_y), EYE_PAL)
+
+
+func draw_pet(stage: String, form: String, x: float, gy: float, sq: float, dormant: bool, still: bool, mood_over: String = "") -> void:
+	var m := mood() if mood_over == "" else mood_over
+	var mc: Color = MARKCOL.get(m, Color("#ffe08a"))
+	if stage == "egg":
+		draw_egg(roundf(x), gy, mc)
+		return
+	var key: String = stage if stage != "adult" else (form if form != "" else "sleepy")
+	var meta: Dictionary = ArtMeta.PET[key]
+	var tex: Texture2D = ART[key]
+	var hover: float = {"explorer": 3.0, "sleepy": 4.0}.get(key, 0.0)
+	var hop := 0.0
+	if not still:
+		if dance > 0.0:
+			hop = absf(sin(t * 9.0)) * 5.0
+		elif startle > 0.0:
+			hop = maxf(0.0, sin(startle * 12.0)) * 6.0
+		elif act == "toy" and absf(pet_x - pet_tx) < 3.0:
+			hop = absf(sin(t * 6.0)) * 3.0
+		if funny > 0.0:
+			hop = absf(sin(t * 8.0)) * 4.0
+	var bob := 0.0 if still else sin(t * (1.2 if form == "sleepy" else 3.0)) * 0.6
+	var breathe := 1.0 + (0.0 if still else sin(t * 2.2) * 0.012)
+	var sqx := 1.0 / sqrt(sq)
+	var sy := sq * breathe
+	var ox := roundf(x * 2.0) / 2.0
+	var oy := roundf((gy - hover - hop - bob) * 2.0) / 2.0
+	var half_w: float = maxf(meta["ax"] - meta["left"], meta["right"] - meta["ax"]) * 0.5
+	var mod := Color.WHITE
+	if tint_t > 0.0:
+		mod = Color.WHITE.lerp(tint.lightened(0.2), 0.35 * minf(1.0, tint_t))
+	if dormant:
+		mod = mod.lerp(Color(0.62, 0.6, 0.78), 0.5)
+	ga = 0.3
+	ell(ox, gy + 1, roundi(half_w * 0.8), 2, Color.BLACK)
+	ga = 1.0
+	var flip: float = -1.0 if pet_dir < 0.0 else 1.0
+	var rot := 0.0
+	if show["tilt"] > 0.0:
+		rot = show["tilt_dir"] * 0.18 * minf(1.0, show["tilt"])
+	# wings (explorer) behind the body
+	if key == "explorer":
+		var wm: Dictionary = ArtMeta.PET["explorer_wing"]
+		var wtex: Texture2D = ART["explorer_wing"]
+		var flap := sin(t * (9.0 if act == "wander" else 4.5)) * 0.32 + 0.38
+		for sd in [-1.0, 1.0]:
+			draw_set_transform(Vector2(ox + sd * 13.0 * 0.5 * sqx, oy - 26.0 * 0.5 * sy), -sd * flap, Vector2(0.5 * sd * sqx, 0.5 * sy))
+			draw_texture(wtex, Vector2(-wm["px"], -wm["py"]), mod)
+	draw_set_transform(Vector2(ox, oy), rot, Vector2(0.5 * sqx * flip, 0.5 * sy))
+	draw_texture(tex, Vector2(-meta["ax"], -meta["ay"]), mod)
+	var fx: float = 0.0
+	var fy: float = float(meta["eye_y"]) - float(meta["ay"])
+	if show["tilt"] > 0.0:
+		fx += show["tilt_dir"] * 2.0
+		fy += 1.0
+	draw_face_hr(fx, fy, float(meta["eye_dx"]), float(meta["mouth_y"]) - float(meta["ay"]), m, sing > 0.0)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var mark_y := oy + (float(meta["mouth_y"]) - float(meta["ay"]) + (6.0 if stage == "adult" else 4.0)) * 0.5 * sy
+	draw_mark(roundf(ox), roundf(mark_y), form if stage == "adult" else "plus", mc)
+	if form == "cheeky":
+		for j in 5:
+			if int(floorf(t * 10.0 + j)) % 3 == 0:
+				continue
+			var aa := t * 2.0 + j * 1.26
+			var rr := half_w + 4.0 + sin(t * 5.0 + j) * 2.0
+			px(ox + cos(aa) * rr, oy - 11.0 + sin(aa) * 14.0, Color("#fff7a0"))
+	var top_u: float = (float(meta["ay"]) - float(meta["top"])) * 0.5 * sy
+	bbox = Rect2(ox - half_w, oy - top_u, half_w * 2.0, gy - (oy - top_u))
 	has_bbox = true
 
 
@@ -802,113 +1085,6 @@ func dims(stage: String, form: String) -> Vector3:
 		"cuddly": return Vector3(17, 15, 0)
 		"cheeky": return Vector3(12, 11, 0)
 	return Vector3(15, 10, 6)
-
-
-func draw_pet(stage: String, form: String, x: float, gy: float, sq: float, dormant: bool, still: bool, mood_over: String = "") -> void:
-	var m := mood() if mood_over == "" else mood_over
-	var mc: Color = MARKCOL.get(m, Color("#ffe08a"))
-	if stage == "egg":
-		draw_egg(roundf(x), gy, mc)
-		return
-	var d := dims(stage, form)
-	var hop := 0.0
-	if not still:
-		if dance > 0.0:
-			hop = absf(sin(t * 9.0)) * 5.0
-		elif startle > 0.0:
-			hop = maxf(0.0, sin(startle * 12.0)) * 6.0
-		elif act == "toy" and absf(pet_x - pet_tx) < 3.0:
-			hop = absf(sin(t * 6.0)) * 3.0
-		if funny > 0.0:
-			hop = absf(sin(t * 8.0)) * 4.0
-	var rx := roundi(d.x / sqrt(sq))
-	var ry := roundi(d.y * sq)
-	var bob := 0.0 if still else sin(t * (1.2 if form == "sleepy" else 3.0))
-	var cx := roundf(x)
-	var cy := roundf(gy - ry - d.z - hop - bob)
-	var col: Color = BODY[form if form != "" else stage]
-	if tint_t > 0.0:
-		col = mixc(col, tint, 0.4 * minf(1.0, tint_t))
-	if dormant:
-		col = mixc(col, Color("#8a86a8"), 0.4)
-	var belly := mixc(col, Color.WHITE, 0.35)
-	ga = 0.28
-	ell(cx, gy + 1, roundi(rx * 0.9), 2, Color.BLACK)
-	ga = 1.0
-	var wob := 0.14 if stage == "child" else (0.04 if stage == "baby" else 0.03)
-	if form == "explorer":
-		var fl := sin(t * (9.0 if act == "wander" else 5.0)) * 0.5 + 0.2
-		for sd in [-1, 1]:
-			for i in range(1, 12):
-				var xx: float = cx + sd * (rx + i - 1)
-				var top := cy - 1 - roundi(i * (0.7 + fl * 0.5))
-				var bot := cy + 3 - roundi(i * 0.25 * (1.0 - fl * 0.3))
-				if bot < top:
-					continue
-				rect(xx, top - 1, 1, 2, INK)
-				rect(xx, bot + 1, 1, 1, INK)
-				rect(xx, top + 1, 1, bot - top, Color.WHITE if i % 3 == 0 else Color("#9fd4ff"))
-	if form == "cuddly":
-		for sd in [-1, 1]:
-			var ex: float = cx + sd * roundi(rx * 0.6)
-			disc(ex, cy - ry + 1, 4, INK)
-			disc(ex, cy - ry + 1, 3, col)
-			px(ex, cy - ry + 2, Color("#ff9aa8"))
-	if form == "cheeky":
-		for i in 8:
-			var ang := PI * (1.1 + 0.8 * i / 7.0)
-			var dx := cos(ang)
-			var dy := sin(ang)
-			var ln := 4 + (i % 2) * 2
-			for k in ln:
-				px(cx + dx * (rx + 1 + k), cy + dy * (ry + 1 + k), INK if k > ln - 2 else Color("#b8a800"))
-	var face_x := cx
-	var face_y := cy
-	var ry_eff: float = ry
-	var rx_eff: float = rx
-	if form == "sleepy":
-		var discs := [[-9, 3, 6], [-3, -2, 8], [5, -1, 8], [11, 3, 5], [1, 4, 7]]
-		for dd in discs:
-			disc(cx + dd[0], cy + dd[1], dd[2] + 1, INK)
-		for dd in discs:
-			disc(cx + dd[0], cy + dd[1], dd[2], col)
-		ell(cx + 1, cy + 6, 9, 3, mixc(col, Color("#9a8ae6"), 0.25))
-		px(cx - 5, cy - 7, Color.WHITE)
-		px(cx - 4, cy - 7, Color.WHITE)
-		face_x = cx + 1
-		face_y = cy + 1
-		ry_eff = 10
-		rx_eff = 13
-	else:
-		var shr: float = show["tilt_dir"] * 7.0 * minf(1.0, show["tilt"]) if show["tilt"] > 0.0 else 0.0
-		blob_shape(cx, cy, rx + 1, ry + 1, wob, INK, shr)
-		blob_shape(cx, cy, rx, ry, wob, col, shr)
-		blob_shape(cx, cy + roundi(ry * 0.35), roundi(rx * 0.62), roundi(ry * 0.5), wob, belly)
-		var hl := mixc(col, Color.WHITE, 0.7)
-		px(cx - roundi(rx * 0.5), cy - roundi(ry * 0.55), hl)
-		px(cx - roundi(rx * 0.5) + 1, cy - roundi(ry * 0.55), hl)
-		if form == "cuddly":
-			var a := 0.0
-			while a < 6.28:
-				px(cx + (rx + 1) * cos(a), cy + (ry + 1) * sin(a), mixc(col, Color.WHITE, 0.5) if int(floorf(a / 0.45)) % 2 == 1 else INK)
-				a += 0.45
-	if show["tilt"] > 0.0:
-		face_x += show["tilt_dir"] * 2
-		face_y += 1
-	draw_face(face_x, face_y, rx_eff, ry_eff, m, sing > 0.0)
-	if stage == "adult":
-		draw_mark(face_x, face_y + roundi(ry_eff * 0.35), form, mc)
-	else:
-		draw_mark(face_x, face_y + roundi(ry_eff * 0.4), "plus", mc)
-	if form == "cheeky":
-		for j in 5:
-			if int(floorf(t * 10.0 + j)) % 3 == 0:
-				continue
-			var aa := t * 2.0 + j * 1.26
-			var rr := rx + 5 + sin(t * 5.0 + j) * 2.0
-			px(cx + cos(aa) * rr, cy + sin(aa) * (ry + 4), Color("#fff7a0"))
-	bbox = Rect2(cx - rx - 2, cy - ry - 4, rx * 2 + 4, gy - (cy - ry - 4))
-	has_bbox = true
 
 
 # ------------------------------------------------------------ landmarks
@@ -2876,8 +3052,9 @@ const NEED_COLS := {"hun": "#ff6a6e", "aff": "#ff7ac8", "ene": "#ffd05a", "cur":
 
 
 func draw_status() -> void:
-	if idle or cer != null or S["stage"] == "egg":
+	if idle or cer != null or S["stage"] == "egg" or ui_fade < 0.02:
 		return
+	ga = ui_fade
 	var i := 0
 	for k in ["hun", "aff", "ene", "cur"]:
 		var x0 := 4 + i * 26
@@ -2891,6 +3068,7 @@ func draw_status() -> void:
 		rect(x0 + 8, 19, 13, 3, Color("#2a2450"))
 		rect(x0 + 8, 19, roundi(13.0 * v), 3, col)
 		i += 1
+	ga = 1.0
 
 
 # ------------------------------------------------------- shop, diary, life
@@ -3417,6 +3595,7 @@ func enter_idle() -> void:
 
 
 func wake_up() -> void:
+	ui_t = 0.0
 	nap = 0.0
 	idle = false
 	idle_t = 0.0
@@ -3429,6 +3608,24 @@ func wake_up() -> void:
 		idle_cam = false
 		open_stream(wanted_facing())
 	squish = 1.2
+
+
+func ui_fade_update(dt: float) -> void:
+	if ui_fade_nodes.is_empty():
+		var keep := [toast_l, cer_l, hint_l, new_egg_b, namer, game_l, guess_row]
+		for c in ui_layer.get_children():
+			if c is Control and not keep.has(c):
+				ui_fade_nodes.append(c)
+	ui_t += dt
+	var panel_open := sens_panel.visible or album_panel.visible or upd_panel.visible or game_panel.visible or shop_panel.visible or diary_panel.visible or settings_panel.visible or dbg_panel.visible
+	var want := 1.0
+	if ui_t > UI_FADE_AFTER and not panel_open and game == "" and cer == null and not namer.visible:
+		want = 0.0
+	var prev := ui_fade
+	ui_fade = move_toward(ui_fade, want, dt * (1.6 if want < 0.5 else 5.0))
+	if absf(ui_fade - prev) > 0.0001:
+		for c in ui_fade_nodes:
+			c.modulate.a = ui_fade
 
 
 func idle_process(dt: float) -> void:
@@ -3464,7 +3661,16 @@ func _input(e: InputEvent) -> void:
 				wake_up()
 			get_viewport().set_input_as_handled()
 			return
+		var pressed: bool = (e is InputEventMouseButton and e.pressed) or (e is InputEventScreenTouch and e.pressed)
+		if pressed and ui_fade < 0.4:
+			var pos: Vector2 = e.position
+			if pos.y >= 168.0 or (pos.y < 18.0 and pos.x > 84.0):
+				ui_t = 0.0
+				idle_t = 0.0
+				get_viewport().set_input_as_handled()
+				return
 		idle_t = 0.0
+		ui_t = 0.0
 
 
 func _process(dt: float) -> void:
@@ -3472,6 +3678,7 @@ func _process(dt: float) -> void:
 		idle_process(minf(dt, 1.0))
 		return
 	dt = minf(dt, 0.05)
+	ui_fade_update(dt)
 	idle_t += dt
 	if idle_t > IDLE_AFTER and cer == null and not namer.visible and shot_dir == "":
 		enter_idle()
@@ -3881,6 +4088,7 @@ func save_shot(n: String) -> void:
 
 # ------------------------------------------------------------------ boot
 func _ready() -> void:
+	load_art()
 	for i in 34:
 		stars.append([(i * 37 + 11) % W, (i * 53 + 7) % 92, i * 1.7])
 	sky_img = Image.create(W, H, false, Image.FORMAT_RGBA8)
