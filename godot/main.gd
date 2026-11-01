@@ -149,6 +149,10 @@ var geo_on := false
 var geo_cls = null
 var geo_t := 0.0
 var perm_wait := {}
+var svc_ok := false
+var svc_steps := false
+var svc_cls = null
+var svc_t := 0.0
 var status_labels := {}
 var stats_l: Label
 
@@ -883,7 +887,7 @@ func on_step(n: int = 1) -> void:
 	step_acc += n
 	while step_acc >= 50.0:
 		step_acc -= 50.0
-		if S["stage"] != "egg":
+		if S["stage"] != "egg" and food.size() < 5:
 			spawn_food()
 
 
@@ -1020,6 +1024,11 @@ func motion_frame() -> void:
 	m_ema += (mag - m_ema) * 0.05
 	var d := mag - m_ema
 	var tms := Time.get_ticks_msec()
+	if svc_ok:
+		if not svc_steps and d > 2.2 and tms - m_last_step > 320 and absf(d) <= 16.0:
+			m_last_step = tms
+			on_step(1)
+		return
 	if absf(d) > 16.0:
 		m_spikes = m_spikes.filter(func(s): return tms - s < 900)
 		m_spikes.append(tms)
@@ -1071,6 +1080,7 @@ func start_mic() -> void:
 	mic_on = true
 	mark_sensor("mic", true)
 	set_status("mic", "on")
+	refresh_service()
 
 
 func peak_freq(buf: PackedFloat32Array, rate: float) -> float:
@@ -1118,7 +1128,8 @@ func mic_frame(dt: float) -> void:
 	mic_base += (minf(lvl, 0.1) - mic_base) * 0.01
 	if lvl > 0.45 and lvl > mic_base * 4.0 and t - mic_last_loud > 1.5:
 		mic_last_loud = t
-		on_loud()
+		if not svc_ok:
+			on_loud()
 		return
 	if lvl > 0.06 and lvl <= 0.45:
 		mic_quiet = 0.0
@@ -1139,6 +1150,63 @@ func mic_frame(dt: float) -> void:
 				copy_back(mic_contour.duplicate())
 			mic_voice = 0.0
 			mic_contour.clear()
+
+
+# ----------------------------------------------------- background service
+func enable_bg() -> void:
+	if svc_ok:
+		return
+	set_status("bg", "asking")
+	ask_perm("ACTIVITY_RECOGNITION", func(_ok: bool):
+		OS.request_permission("POST_NOTIFICATIONS")
+		start_service())
+
+
+func start_service() -> void:
+	if not OS.has_feature("android") or not Engine.has_singleton("AndroidRuntime"):
+		set_status("bg", "unavailable here")
+		return
+	var rt = Engine.get_singleton("AndroidRuntime")
+	svc_cls = JavaClassWrapper.wrap("com.pierrejoshua.digivi.Native")
+	if svc_cls == null:
+		set_status("bg", "unavailable (helper missing)")
+		return
+	var r := str(svc_cls.startService(rt.getActivity()))
+	if r == "ok":
+		svc_ok = true
+		svc_steps = bool(svc_cls.hasStepCounter(rt.getActivity()))
+		mark_sensor("bg", true)
+		set_status("bg", "on (%s)" % ("step counter" if svc_steps else "no step counter, using motion"))
+	else:
+		set_status("bg", "unavailable: " + r)
+
+
+func refresh_service() -> void:
+	if svc_ok:
+		start_service()
+
+
+func apply_pending() -> void:
+	if not svc_ok or svc_cls == null:
+		return
+	var rt = Engine.get_singleton("AndroidRuntime")
+	var p := str(svc_cls.takePending(rt.getActivity())).split(",", true, 3)
+	if p.size() < 4:
+		return
+	var steps := int(p[0])
+	var shakes := int(p[1])
+	var louds := int(p[2])
+	if steps > 0:
+		on_step(steps)
+	if shakes > 0:
+		S["xp"]["che"] += 5.0 * (shakes - 1)
+		on_shake()
+	if louds > 0:
+		S["xp"]["che"] += 3.0 * (louds - 1)
+		on_loud()
+	for k in p[3].split(";", false):
+		if not S["places"].has(k):
+			on_new_place(k)
 
 
 # ------------------------------------------------------------- location
@@ -1167,6 +1235,7 @@ func start_geo() -> void:
 		geo_on = true
 		mark_sensor("geo", true)
 		set_status("geo", "on (waiting for a fix)")
+		refresh_service()
 	else:
 		set_status("geo", "unavailable: " + str(r))
 
@@ -1775,10 +1844,10 @@ func build_sensor_ui(ui: CanvasLayer) -> void:
 	small_btn("alb", Vector2(24, 2), Vector2(20, 9), 5, func(): toggle_panel(album_panel), ui).flat = true
 	sens_panel = Panel.new()
 	sens_panel.position = Vector2(3, 14)
-	sens_panel.size = Vector2(102, 152)
+	sens_panel.size = Vector2(102, 172)
 	sens_panel.visible = false
 	ui.add_child(sens_panel)
-	var rows := [["motion", "Motion", "steps, shaking", enable_motion], ["mic", "Microphone", "noise, voice", enable_mic], ["cam", "Camera", "show it things", enable_cam], ["geo", "Location", "new places", enable_geo]]
+	var rows := [["motion", "Motion", "steps, shaking", enable_motion], ["mic", "Microphone", "noise, voice", enable_mic], ["cam", "Camera", "show it things", enable_cam], ["geo", "Location", "new places", enable_geo], ["bg", "Background", "steps, places while closed", enable_bg]]
 	var y := 3.0
 	for r in rows:
 		small_label(r[1], Vector2(3, y), Vector2(50, 7), 6, sens_panel)
@@ -2099,6 +2168,10 @@ func _process(dt: float) -> void:
 	if want_open == 0.0 and show["open"] < 0.02:
 		show["open"] = 0.0
 		vf_ok = false
+	svc_t += dt
+	if svc_t > 1.0:
+		svc_t = 0.0
+		apply_pending()
 	if cer == null:
 		mic_frame(dt)
 		cam_frame(dt)
@@ -2469,6 +2542,8 @@ func _ready() -> void:
 		enable_geo()
 	if S["sens"].get("cam", false):
 		enable_cam()
+	if S["sens"].get("bg", false):
+		enable_bg()
 
 
 func _notification(what: int) -> void:

@@ -51,6 +51,43 @@ public class Native {
     /** "lat,lon,accuracy" or "" if there is no fix yet. */
     public static String lastFix() { return lastFix; }
 
+    /** Starts (or refreshes) the background service. Returns "ok" or "error: ...". */
+    public static String startService(Activity activity) {
+        try {
+            android.content.Intent i = new android.content.Intent(activity, DigiviService.class);
+            if (android.os.Build.VERSION.SDK_INT >= 26) activity.startForegroundService(i); else activity.startService(i);
+            return "ok";
+        } catch (Throwable t) {
+            return "error: " + t;
+        }
+    }
+
+    /** True if the phone has a hardware step counter and permission to read it. */
+    public static boolean hasStepCounter(Activity activity) {
+        try {
+            android.hardware.SensorManager sm = (android.hardware.SensorManager) activity.getSystemService("sensor");
+            return sm.getDefaultSensor(android.hardware.Sensor.TYPE_STEP_COUNTER) != null
+                    && activity.checkSelfPermission("android.permission.ACTIVITY_RECOGNITION") == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** Reads and clears what the service counted: "steps,shakes,louds,key1;key2". */
+    public static String takePending(Activity activity) {
+        try {
+            synchronized ("digivi_pending") {
+                android.content.SharedPreferences p = activity.getSharedPreferences("digivi_pending", android.content.Context.MODE_PRIVATE);
+                java.util.Set<String> keys = p.getStringSet("keys", new java.util.HashSet<String>());
+                String out = p.getInt("steps", 0) + "," + p.getInt("shakes", 0) + "," + p.getInt("louds", 0) + "," + android.text.TextUtils.join(";", keys);
+                p.edit().remove("steps").remove("shakes").remove("louds").remove("keys").apply();
+                return out;
+            }
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
     /** How many faces are in an RGBA image (width must be even). */
     public static int faces(byte[] rgba, int w, int h) {
         try {
