@@ -154,6 +154,16 @@ var svc_steps := false
 var svc_cls = null
 var svc_t := 0.0
 var bg_asking := false
+const UPDATE_URL := "https://squigglyshotda-lang.github.io/Digivi/downloads/version.json"
+const UPDATE_BASE := "https://squigglyshotda-lang.github.io/Digivi/downloads/"
+var upd_panel: Panel
+var upd_btn: Button
+var upd_status: Label
+var upd_action: Button
+var upd_info := {}
+var upd_phase := "idle"   # idle, checking, available, downloading, downloaded, error, current
+var upd_t := 0.0
+var upd_auto_done := false
 var bg_wait := 0.0
 var bg_poll_t := 0.0
 var diag_t := 0.0
@@ -1892,6 +1902,9 @@ func small_label(text: String, pos: Vector2, size: Vector2, fs: int, parent: Nod
 func build_sensor_ui(ui: CanvasLayer) -> void:
 	small_btn("sns", Vector2(2, 2), Vector2(20, 9), 5, func(): toggle_panel(sens_panel), ui).flat = true
 	small_btn("alb", Vector2(24, 2), Vector2(20, 9), 5, func(): toggle_panel(album_panel), ui).flat = true
+	upd_btn = small_btn("upd", Vector2(46, 2), Vector2(20, 9), 5, func(): toggle_panel(upd_panel), ui)
+	upd_btn.flat = true
+	build_update_ui(ui)
 	sens_panel = Panel.new()
 	sens_panel.position = Vector2(3, 14)
 	sens_panel.size = Vector2(102, 190)
@@ -1951,11 +1964,158 @@ func build_sensor_ui(ui: CanvasLayer) -> void:
 	refresh_album()
 
 
+func build_update_ui(ui: CanvasLayer) -> void:
+	upd_panel = Panel.new()
+	upd_panel.position = Vector2(3, 14)
+	upd_panel.size = Vector2(102, 90)
+	upd_panel.visible = false
+	ui.add_child(upd_panel)
+	small_label("Updates", Vector2(3, 3), Vector2(60, 8), 6, upd_panel)
+	upd_status = small_label("", Vector2(3, 13), Vector2(96, 44), 5, upd_panel)
+	upd_action = small_btn("Check now", Vector2(3, 62), Vector2(60, 12), 5, upd_press, upd_panel)
+	small_btn("Close", Vector2(66, 62), Vector2(32, 12), 5, func(): upd_panel.visible = false, upd_panel)
+	upd_refresh_ui()
+
+
+func upd_cls():
+	if not OS.has_feature("android") or not Engine.has_singleton("AndroidRuntime"):
+		return null
+	return JavaClassWrapper.wrap("com.pierrejoshua.digivi.Updater")
+
+
+func upd_activity():
+	return Engine.get_singleton("AndroidRuntime").getActivity()
+
+
+func upd_current_code() -> int:
+	var c = upd_cls()
+	return int(c.versionCode(upd_activity())) if c != null else 0
+
+
+func upd_current_name() -> String:
+	var c = upd_cls()
+	return str(c.versionName(upd_activity())) if c != null else "desktop"
+
+
+func upd_check() -> void:
+	var c = upd_cls()
+	if c == null:
+		upd_phase = "error"
+		upd_msg = "Updates only work on the phone."
+		upd_refresh_ui()
+		return
+	upd_phase = "checking"
+	c.check(UPDATE_URL)
+	upd_refresh_ui()
+
+
+func upd_press() -> void:
+	var c = upd_cls()
+	match upd_phase:
+		"available":
+			upd_phase = "downloading"
+			upd_pct = 0
+			c.download(upd_activity(), UPDATE_BASE + str(upd_info.get("apk", "digivi-latest.apk")))
+		"downloaded":
+			save_state()
+			var r := str(c.install(upd_activity()))
+			if r == "permission":
+				upd_msg = "Allow Digivi to install apps on the screen that opened, then come back and tap Install."
+			elif r != "ok":
+				upd_msg = "Could not start install: " + r
+		"checking", "downloading":
+			pass
+		_:
+			upd_check()
+	upd_refresh_ui()
+
+
+var upd_msg := ""
+var upd_pct := 0
+
+
+func upd_poll(dt: float) -> void:
+	if not upd_auto_done and OS.has_feature("android"):
+		upd_t += dt
+		if upd_t > 4.0:
+			upd_auto_done = true
+			upd_check()
+	if upd_phase != "checking" and upd_phase != "downloading":
+		return
+	var c = upd_cls()
+	if c == null:
+		return
+	var st := str(c.state())
+	if upd_phase == "checking":
+		if st.begins_with("info:"):
+			var j = JSON.parse_string(st.substr(5))
+			if typeof(j) == TYPE_DICTIONARY:
+				upd_info = j
+				if int(j.get("code", 0)) > upd_current_code():
+					upd_phase = "available"
+				else:
+					upd_phase = "current"
+			else:
+				upd_phase = "error"
+				upd_msg = "Update info was not readable."
+			upd_refresh_ui()
+		elif st.begins_with("error:"):
+			upd_phase = "error"
+			upd_msg = "Could not check: " + st.substr(6)
+			upd_refresh_ui()
+	elif upd_phase == "downloading":
+		if st == "downloaded":
+			upd_phase = "downloaded"
+			upd_refresh_ui()
+		elif st.begins_with("error:"):
+			upd_phase = "error"
+			upd_msg = "Download failed: " + st.substr(6)
+			upd_refresh_ui()
+		elif st.begins_with("downloading:"):
+			var p := int(st.substr(12))
+			if p != upd_pct:
+				upd_pct = p
+				upd_refresh_ui()
+
+
+func upd_refresh_ui() -> void:
+	if upd_status == null:
+		return
+	var cur := "Version %s" % upd_current_name()
+	match upd_phase:
+		"idle":
+			upd_status.text = cur
+			upd_action.text = "Check now"
+		"checking":
+			upd_status.text = cur + "\nChecking..."
+			upd_action.text = "..."
+		"current":
+			upd_status.text = cur + "\nYou have the latest."
+			upd_action.text = "Check now"
+		"available":
+			upd_status.text = "%s\nNew: %s\n%s" % [cur, str(upd_info.get("name", "?")), str(upd_info.get("notes", ""))]
+			upd_action.text = "Download"
+		"downloading":
+			upd_status.text = "%s\nDownloading %d%%" % [cur, upd_pct]
+			upd_action.text = "..."
+		"downloaded":
+			upd_status.text = "%s\nReady. Your pet is saved. Tap Install, then Update on Android's screen." % cur
+			upd_action.text = "Install"
+		"error":
+			upd_status.text = cur + "\n" + upd_msg
+			upd_action.text = "Try again"
+	if upd_msg != "" and upd_phase == "downloaded":
+		upd_status.text += "\n" + upd_msg
+	if upd_btn != null:
+		upd_btn.text = "upd!" if (upd_phase == "available" or upd_phase == "downloaded") else "upd"
+
+
 func toggle_panel(p: Panel) -> void:
 	var was := p.visible
 	sens_panel.visible = false
 	album_panel.visible = false
 	album_detail.visible = false
+	upd_panel.visible = false
 	p.visible = not was
 
 
@@ -2223,6 +2383,7 @@ func _process(dt: float) -> void:
 		show["open"] = 0.0
 		vf_ok = false
 	bg_poll(dt)
+	upd_poll(dt)
 	svc_t += dt
 	if svc_t > 1.0:
 		svc_t = 0.0
