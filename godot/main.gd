@@ -175,6 +175,8 @@ var cam_mat: ShaderMaterial
 var cam_big := PackedByteArray()
 var vf_tex: ImageTexture
 var vf_ok := false
+var vf_rect: TextureRect
+var vf_flash: ColorRect
 var cam_rot := {"back": 1, "front": 3}
 var cam_flip := {"back": false, "front": true}
 var show := {"open": 0.0, "steady": 0.0, "last_keep": -99.0, "flash": 0.0, "freeze": 0.0, "bubble": null, "bubble_t": 0.0, "tilt": 0.0, "tilt_dir": 1}
@@ -1479,7 +1481,21 @@ func setup_cam_view() -> void:
 	cam_mat.shader = sh
 	cr.material = cam_mat
 	cam_vp.add_child(cr)
-	vf_tex = ImageTexture.create_from_image(Image.create(VW, VH, false, Image.FORMAT_RGBA8))
+	vf_rect = TextureRect.new()
+	vf_rect.texture = cam_vp.get_texture()
+	vf_rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	vf_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	vf_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	vf_rect.size = Vector2(28, 36)
+	vf_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vf_rect.visible = false
+	add_child(vf_rect)
+	vf_flash = ColorRect.new()
+	vf_flash.color = Color.WHITE
+	vf_flash.size = Vector2(28, 36)
+	vf_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vf_flash.modulate.a = 0.0
+	vf_rect.add_child(vf_flash)
 
 
 func pick_format(feed: CameraFeed) -> int:
@@ -1591,7 +1607,6 @@ func cam_frame(dt: float) -> void:
 	var small := im.duplicate()
 	small.resize(VW, VH, Image.INTERPOLATE_BILINEAR)
 	var raw: PackedByteArray = small.get_data()
-	vf_tex.update(Image.create_from_data(VW, VH, false, Image.FORMAT_RGBA8, quant(raw, VW, VH)))
 	vf_ok = true
 	var n := VW * VH
 	var sum := 0.0
@@ -1718,6 +1733,8 @@ func react_to_show(info: Dictionary, sprite: String) -> void:
 func draw_viewfinder() -> void:
 	var o: float = show["open"]
 	if o < 0.05 or cer != null:
+		if vf_rect != null:
+			vf_rect.visible = false
 		return
 	var x0 := 64
 	var y0 := roundi(50 + sin(t * 1.5) * 1.5)
@@ -1728,13 +1745,12 @@ func draw_viewfinder() -> void:
 	rect(x0 + 3, y0 + 3, 30, 38, INK)
 	rect(x0 - 1, y0 + 21, 1, 3, pale)
 	rect(x0 - 2, y0 + 22, 1, 1, pale)
-	if vf_ok:
-		draw_texture(vf_tex, Vector2(x0 + 4, y0 + 4), Color(1, 1, 1, o))
-	else:
-		rect(x0 + 4, y0 + 4, 28, 36, Color("#2a2450"))
-	if show["flash"] > 0.0:
-		ga = o * minf(1.0, show["flash"] / 0.15)
-		rect(x0 + 4, y0 + 4, 28, 36, Color.WHITE)
+	rect(x0 + 4, y0 + 4, 28, 36, Color("#2a2450"))
+	if vf_rect != null:
+		vf_rect.visible = vf_ok
+		vf_rect.position = Vector2(x0 + 4, y0 + 4)
+		vf_rect.modulate.a = o
+		vf_flash.modulate.a = minf(1.0, show["flash"] / 0.15) if show["flash"] > 0.0 else 0.0
 	ga = o
 	var sw := roundi(28.0 * minf(1.0, show["steady"] / 1.2))
 	if sw > 0:
@@ -2490,28 +2506,23 @@ func shot_tick() -> void:
 	match shot_n:
 		5: start_hatch()
 		40: S["name"] = "Pip"; namer.visible = false; namer_shown = true
-		60: for i in 6: on_new_place("t%d" % i)
-		100: save_shot("places")
-		101: fake_show()
-		130: save_shot("baby_show")
-		131: sing_debug()
-		200: save_shot("sing")
-		201: force_stage("child", "")
-		400: fake_show()
-		430: save_shot("child_show")
-		431: force_stage("adult", "exp")
-		640: fake_show()
-		670: save_shot("adult_show")
-		671: toggle_panel(sens_panel)
-		680: save_shot("sensors")
-		681: toggle_panel(album_panel)
-		690: save_shot("album")
-		691: show_detail(S["album"][0])
-		700: save_shot("detail")
-		701: on_step(100); on_shake()
-		730: save_shot("shake")
-		731: print("album=", S["album"].size(), " shows=", S["shows"], " steps=", S["steps"])
-		732: get_tree().quit()
+		45: fake_cam()
+		120: save_shot("viewfinder")
+		121: get_tree().quit()
+
+
+func fake_cam() -> void:
+	var path := OS.get_environment("DIGIVI_PHOTO")
+	if path == "":
+		return
+	setup_cam_view()
+	var im := Image.load_from_file(path)
+	cam_mat.set_shader_parameter("tex0", ImageTexture.create_from_image(im))
+	cam_mat.set_shader_parameter("ycbcr", 0)
+	cam_mat.set_shader_parameter("rot", 0)
+	cam_mat.set_shader_parameter("mirror", 0)
+	cam_mat.set_shader_parameter("crop", Vector2(0.78, 1.0))
+	cam_on = true
 
 
 func save_shot(n: String) -> void:
