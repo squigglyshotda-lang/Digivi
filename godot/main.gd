@@ -1656,6 +1656,63 @@ func apply_cam_params() -> void:
 	cam_mat.set_shader_parameter("crop", crop)
 
 
+var cam_flat_t := 0.0
+var cam_restarts := 0
+var cam_diag := ""
+
+
+# True when the frame is a flat colour (feed not delivering). Restarts the stream if it stays that way.
+func cam_flat_check(im: Image, step: float) -> bool:
+	var tiny := im.duplicate()
+	tiny.resize(12, 12, Image.INTERPOLATE_NEAREST)
+	var d := tiny.get_data()
+	var n := 144
+	var sr := 0.0
+	var sg := 0.0
+	var sb := 0.0
+	var ls := PackedFloat32Array()
+	ls.resize(n)
+	for i in n:
+		var r := float(d[i * 4])
+		var g := float(d[i * 4 + 1])
+		var b := float(d[i * 4 + 2])
+		sr += r
+		sg += g
+		sb += b
+		ls[i] = 0.3 * r + 0.59 * g + 0.11 * b
+	var ml := 0.0
+	for v in ls:
+		ml += v
+	ml /= n
+	var vr := 0.0
+	for v in ls:
+		vr += (v - ml) * (v - ml)
+	var sd := sqrt(vr / n)
+	var lit := ml > 25.0
+	cam_diag = "cam %d %d %d sd%d r%d" % [int(sr / n), int(sg / n), int(sb / n), int(sd), cam_restarts]
+	if sd < 3.0 and lit:
+		cam_flat_t += step
+		vf_ok = false
+		cam_steady = 0.0
+		show["steady"] = 0.0
+		if cam_flat_t > 2.5:
+			cam_flat_t = 0.0
+			cam_restarts += 1
+			restart_stream()
+		return true
+	cam_flat_t = 0.0
+	return false
+
+
+func restart_stream() -> void:
+	if cam_feed == null:
+		return
+	cam_feed.feed_is_active = false
+	var f := cam_facing
+	cam_on = false
+	open_stream(f)
+
+
 func cam_frame(dt: float) -> void:
 	if not cam_on or cam_vp == null:
 		return
@@ -1679,6 +1736,8 @@ func cam_frame(dt: float) -> void:
 	if im == null or im.is_empty():
 		return
 	im.convert(Image.FORMAT_RGBA8)
+	if cam_flat_check(im, step):
+		return
 	cam_big = im.get_data()
 	if cam_facing == "front":
 		show["steady"] = 0.0
@@ -2164,7 +2223,7 @@ func toggle_panel(p: Panel) -> void:
 
 func update_stats() -> void:
 	if sens_panel != null and sens_panel.visible:
-		stats_l.text = "steps %d  places %d  faces %d\ncamera %s  tilt %d  shown %d\nmic %.2f\n%s" % [S["steps"], S["places"].size(), S["faces"], (cam_facing if cam_on else "off"), int(m_tilt), S["shows"], mic_lvl, diag_text]
+		stats_l.text = "steps %d  places %d  faces %d\ncamera %s  tilt %d  shown %d\nmic %.2f\n%s\n%s" % [S["steps"], S["places"].size(), S["faces"], (cam_facing if cam_on else "off"), int(m_tilt), S["shows"], mic_lvl, diag_text, cam_diag]
 		diag_t += 0.25
 		if diag_t > 2.0 and svc_cls != null and OS.has_feature("android"):
 			diag_t = 0.0
@@ -2809,6 +2868,8 @@ func _notification(what: int) -> void:
 	elif what == NOTIFICATION_APPLICATION_RESUMED:
 		if perm_paused:
 			perm_resumed = true
+		if cam_on:
+			restart_stream()
 		var hrs := clampf((Time.get_unix_time_from_system() - float(S["last"])) / 3600.0, 0.0, 24.0 * 30.0)
 		if S["stage"] != "egg" and hrs > 0.01:
 			decay(hrs, true)

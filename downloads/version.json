@@ -1,1 +1,1 @@
-{"code": 8, "name": "0.5.1", "apk": "digivi-latest.apk", "notes": "Fix permission prompts for location, camera and mic"}
+{"code": 9, "name": "0.5.2", "apk": "digivi-latest.apk", "notes": "Camera: ignore blank frames and restart a stalled camera"}
