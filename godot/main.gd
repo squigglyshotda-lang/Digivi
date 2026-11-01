@@ -222,6 +222,19 @@ var held_food = null
 var ptr_down := false
 var nap := 0.0
 const BOWL_X := 92.0
+var game := ""
+var game_t := 0.0
+var game_score := 0
+var game_items: Array = []
+var game_spawn := 0.0
+var catch_x := 54.0
+var game_panel: Panel
+var game_l: Label
+var game_stars_l: Label
+var guess_row: Control
+var guess_round := 0
+var guess_wait := 0.0
+var guess_dir := 1
 var ball_x := 70.0
 var ball_v := 0.0
 var ball_play := -10.0
@@ -263,7 +276,7 @@ func fresh() -> Dictionary:
 		"stage": "egg", "name": "", "taps": 0,
 		"xp": {"exp": 0.0, "cud": 0.0, "che": 0.0, "slp": 0.0},
 		"needs": {"hun": 70.0, "aff": 70.0, "ene": 80.0, "cur": 60.0},
-		"steps": 0, "faces": 0, "places": [], "collection": [], "album": [], "shows": 0, "sens": {"motion": true, "mic": false, "cam": false, "geo": false}, "mess": [], "neglectH": 0.0, "last": Time.get_unix_time_from_system(),
+		"steps": 0, "faces": 0, "places": [], "collection": [], "album": [], "shows": 0, "sens": {"motion": true, "mic": false, "cam": false, "geo": false}, "mess": [], "stars": 0, "neglectH": 0.0, "last": Time.get_unix_time_from_system(),
 	}
 
 
@@ -2079,6 +2092,7 @@ func build_sensor_ui(ui: CanvasLayer) -> void:
 	upd_btn.flat = true
 	small_btn("zz", Vector2(68, 2), Vector2(18, 9), 5, tuck_in, ui).flat = true
 	build_update_ui(ui)
+	build_game_ui(ui)
 	sens_panel = Panel.new()
 	sens_panel.position = Vector2(3, 14)
 	sens_panel.size = Vector2(102, 190)
@@ -2149,6 +2163,160 @@ func build_update_ui(ui: CanvasLayer) -> void:
 	upd_action = small_btn("Check now", Vector2(3, 62), Vector2(60, 12), 5, upd_press, upd_panel)
 	small_btn("Close", Vector2(66, 62), Vector2(32, 12), 5, func(): upd_panel.visible = false, upd_panel)
 	upd_refresh_ui()
+
+
+func build_game_ui(ui: CanvasLayer) -> void:
+	small_btn("play", Vector2(2, 179), Vector2(24, 10), 5, func(): toggle_panel(game_panel), ui).flat = true
+	game_panel = Panel.new()
+	game_panel.position = Vector2(3, 14)
+	game_panel.size = Vector2(102, 72)
+	game_panel.visible = false
+	ui.add_child(game_panel)
+	small_label("Play", Vector2(3, 3), Vector2(60, 8), 6, game_panel)
+	game_stars_l = small_label("", Vector2(3, 12), Vector2(96, 8), 5, game_panel)
+	small_btn("Catch the food", Vector2(3, 24), Vector2(96, 12), 5, func(): start_game("catch"), game_panel)
+	small_btn("Which way?", Vector2(3, 38), Vector2(96, 12), 5, func(): start_game("guess"), game_panel)
+	small_btn("Close", Vector2(3, 54), Vector2(96, 12), 5, func(): game_panel.visible = false, game_panel)
+	game_l = make_label(7, 30, 20)
+	ui.add_child(game_l)
+	guess_row = Control.new()
+	ui.add_child(guess_row)
+	small_btn("< Left", Vector2(6, 158), Vector2(44, 16), 6, func(): guess(-1), guess_row)
+	small_btn("Right >", Vector2(58, 158), Vector2(44, 16), 6, func(): guess(1), guess_row)
+	guess_row.visible = false
+	refresh_game_ui()
+
+
+func refresh_game_ui() -> void:
+	if game_stars_l != null:
+		game_stars_l.text = "Stars: %d   Best catch: %d" % [int(S.get("stars", 0)), int(S.get("best_catch", 0))]
+
+
+func start_game(kind: String) -> void:
+	if S["stage"] == "egg":
+		toast("Hatch it first.")
+		return
+	if neglect_state() in ["away", "lost"]:
+		toast("It is not here.")
+		return
+	game_panel.visible = false
+	game = kind
+	game_score = 0
+	game_items.clear()
+	game_spawn = 0.0
+	food.clear()
+	show["open"] = 0.0
+	if kind == "catch":
+		game_t = 20.0
+		catch_x = pet_x
+		game_l.text = "Catch the food!  0"
+	else:
+		guess_round = 0
+		guess_wait = 0.0
+		pet_tx = 54.0
+		pet_x = 54.0
+		look_x = 0.0
+		guess_row.visible = true
+		game_l.text = "Which way will it look?  1/5"
+
+
+func guess(dir: int) -> void:
+	if game != "guess" or guess_wait > 0.0:
+		return
+	guess_dir = 1 if randf() < 0.5 else -1
+	guess_wait = 1.3
+	guess_round += 1
+	if dir == guess_dir:
+		game_score += 1
+		chirp()
+		happy = 1.5
+		add_part("heart", pet_x + rnd(-6, 6), GROUND - 22, rnd(-3, 3), -14, 1.1)
+		toast("Yes!")
+	else:
+		toast("Not that way.")
+		sfx(220, 0.15, "square", 0.04, -60)
+	game_l.text = "Right: %d   Round %d/5" % [game_score, mini(guess_round, 5)]
+
+
+func update_game(dt: float) -> void:
+	idle_t = 0.0
+	wake = 15.0
+	if game == "catch":
+		game_t -= dt
+		var a := Input.get_accelerometer()
+		if a != Vector3.ZERO and absf(a.x) > 1.2:
+			catch_x += a.x * (1.0 if tilt_flip else -1.0) * 18.0 * dt
+		catch_x = clampf(catch_x, 12.0, 96.0)
+		var dx := catch_x - pet_x
+		pet_x += dx * minf(1.0, dt * 10.0)
+		pet_dir = signf(dx) if absf(dx) > 0.5 else pet_dir
+		pet_tx = pet_x
+		game_spawn -= dt
+		if game_spawn <= 0.0:
+			game_spawn = rnd(0.35, 0.7)
+			game_items.append({"x": rnd(14, 94), "y": 10.0, "v": rnd(38, 58), "gold": randf() < 0.12})
+		for it in game_items:
+			it["y"] += it["v"] * dt
+			if absf(it["x"] - pet_x) < 8.0 and it["y"] > GROUND - 18.0 and it["y"] < GROUND + 2.0:
+				game_score += 3 if it["gold"] else 1
+				it["dead"] = true
+				burst(it["x"], it["y"], 5, [Color("#fff7a0"), Color("#ff9ad9")], 24.0)
+				sfx(700 if not it["gold"] else 1000, 0.08, "square", 0.04, 120)
+				game_l.text = "Caught %d   %d" % [game_score, ceili(maxf(game_t, 0.0))]
+			elif it["y"] > GROUND + 4.0:
+				it["dead"] = true
+		game_items = game_items.filter(func(i): return not i.get("dead", false))
+		game_l.text = "Caught %d   %d" % [game_score, ceili(maxf(game_t, 0.0))]
+		if game_t <= 0.0:
+			end_game()
+	elif game == "guess":
+		if guess_wait > 0.0:
+			look_x = float(guess_dir)
+			guess_wait -= dt
+			if guess_wait <= 0.0:
+				look_x = 0.0
+				if guess_round >= 5:
+					end_game()
+
+
+func end_game() -> void:
+	var kind := game
+	game = ""
+	guess_row.visible = false
+	game_items.clear()
+	var stars := 0
+	if kind == "catch":
+		stars = game_score / 4 + (1 if game_score > 0 else 0)
+		if game_score > int(S.get("best_catch", 0)):
+			S["best_catch"] = game_score
+	else:
+		stars = game_score
+	S["stars"] = int(S.get("stars", 0)) + stars
+	need("cur", 6.0)
+	need("aff", 3.0)
+	S["xp"]["exp"] += 0.5 * game_score
+	happy = 2.5
+	excited = 1.5
+	chirp()
+	pet_tx = pet_x
+	game_l.text = ""
+	toast("%s: %d. +%d stars" % ["Catch" if kind == "catch" else "Guessing", game_score, stars])
+	refresh_game_ui()
+	save_state()
+	game_panel.visible = true
+
+
+func draw_game() -> void:
+	if game != "catch":
+		return
+	for it in game_items:
+		var gold: bool = it["gold"]
+		var c := Color("#ffd05a") if gold else Color("#ff5a6e")
+		disc(it["x"], roundf(it["y"]), 3, INK)
+		disc(it["x"], roundf(it["y"]), 2, c)
+		px(it["x"] - 1, it["y"] - 1, mixc(c, Color.WHITE, 0.6))
+		if not gold:
+			px(it["x"] + 1, it["y"] - 3, Color("#4fc47e"))
 
 
 func upd_cls():
@@ -2290,6 +2458,7 @@ func toggle_panel(p: Panel) -> void:
 	album_panel.visible = false
 	album_detail.visible = false
 	upd_panel.visible = false
+	game_panel.visible = false
 	p.visible = not was
 
 
@@ -2924,7 +3093,10 @@ func _process(dt: float) -> void:
 	if cer != null:
 		update_ceremony(dt)
 	else:
-		update_pet(dt)
+		if game != "":
+			update_game(dt)
+		else:
+			update_pet(dt)
 		acc += dt
 		while acc >= 1.0:
 			acc -= 1.0
@@ -2973,6 +3145,7 @@ func _draw() -> void:
 		ell(54, GROUND, 12, 2, Color("#a07a4a"))
 	if S["stage"] != "egg" and (is_sleeping() or ns == "dormant") and not idle and randf() < 0.01:
 		add_part("z", pet_x + 8, GROUND - 24, 4, -8, 1.8)
+	draw_game()
 	draw_viewfinder()
 	draw_parts()
 	draw_weather()
@@ -2986,6 +3159,13 @@ func in_box(p: Vector2) -> bool:
 
 func _unhandled_input(e: InputEvent) -> void:
 	if namer.visible or cer != null:
+		return
+	if game != "":
+		if game == "catch":
+			if e is InputEventMouseButton and e.pressed:
+				catch_x = e.position.x
+			elif e is InputEventMouseMotion and e.button_mask != 0:
+				catch_x = e.position.x
 		return
 	if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
 		if e.pressed:
