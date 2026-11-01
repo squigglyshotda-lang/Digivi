@@ -222,6 +222,27 @@ var held_food = null
 var ptr_down := false
 var nap := 0.0
 const BOWL_X := 92.0
+var ball_x := 70.0
+var ball_v := 0.0
+var ball_play := -10.0
+var tilt_flip := false
+var wind := 0.0
+var blow_t := 0.0
+var blow_probe := 0.0
+var blow_msg := false
+var wx_kind := "clear"
+var wx_override := ""
+var wx_t := 1700.0
+var wx_http: HTTPRequest
+var wx_told := ""
+var charging := false
+var batt := -1
+var power_t := 0.0
+var lux := -1.0
+var dark := false
+var dark_t := 0.0
+var light_started := false
+var play_cls = null
 var ui_layer: CanvasLayer
 const IDLE_AFTER := 60.0
 const IDLE_FPS := 3
@@ -382,7 +403,7 @@ func decay(h: float, away: bool) -> void:
 
 
 func is_sleeping() -> bool:
-	return S["stage"] != "egg" and wake <= 0.0 and (nap > 0.0 or S["needs"]["ene"] < 18.0 or (is_night() and S["needs"]["ene"] < 92.0))
+	return S["stage"] != "egg" and wake <= 0.0 and (nap > 0.0 or dark or S["needs"]["ene"] < 18.0 or (is_night() and S["needs"]["ene"] < 92.0))
 
 
 func neglect_state() -> String:
@@ -575,6 +596,7 @@ func draw_world() -> void:
 	for i in 3:
 		cloud(fposmod(t * (2.5 + i * 1.3) + i * 53.0, W + 40.0) - 20.0, 26 + i * 24, cc)
 	draw_island(12, 110 + sin(t * 0.6) * 2, 9, Color("#7fe0a0"), Color("#7a6aa6"), 7, n)
+	draw_windmill()
 	draw_island(98, 104 + sin(t * 0.5 + 2.0) * 2, 8, Color("#7fe0a0"), Color("#7a6aa6"), 6, n)
 	draw_places(n, false)
 	draw_island(54, GROUND, 48, Color("#5fcf8a"), Color("#7a6aa6"), 26, n)
@@ -599,6 +621,7 @@ func draw_world() -> void:
 		px(BOWL_X - 2, GROUND - 1, Color("#ff5a6e"))
 		px(BOWL_X, GROUND - 1, Color("#4fc47e"))
 		px(BOWL_X + 2, GROUND - 1, Color("#ffd05a"))
+	draw_ball()
 	for fd in food:
 		var r := 2 if fd.get("held", false) else 1
 		disc(fd["x"], roundf(fd["y"]), r, Color("#ff5a6e"))
@@ -1218,6 +1241,26 @@ func mic_frame(dt: float) -> void:
 		mic_last_loud = t
 		if not svc_ok:
 			on_loud()
+		return
+	blow_probe += dt
+	if lvl > 0.1 and lvl <= 0.45 and blow_probe > 0.1:
+		blow_probe = 0.0
+		if peak_freq(buf, AudioServer.get_mix_rate()) == 0.0:
+			blow_t += 0.1
+		else:
+			blow_t = maxf(0.0, blow_t - 0.1)
+	elif lvl < 0.1:
+		blow_t = maxf(0.0, blow_t - dt * 2.0)
+	if blow_t > 0.4:
+		wind = minf(wind + dt * 3.0, 4.0)
+		wake = 15.0
+		happy = maxf(happy, 0.6)
+		look_x = -1.0
+		if not blow_msg:
+			blow_msg = true
+			toast("A breeze! The windmill spins.")
+		if randf() < 0.3:
+			add_part("px", 16.0, 100.0, rnd(10, 26), rnd(-6, 4), 1.4, Color("#fff7f0"))
 		return
 	if lvl > 0.06 and lvl <= 0.45:
 		mic_quiet = 0.0
@@ -2252,7 +2295,7 @@ func toggle_panel(p: Panel) -> void:
 
 func update_stats() -> void:
 	if sens_panel != null and sens_panel.visible:
-		stats_l.text = "steps %d  places %d  faces %d\ncamera %s  tilt %d  shown %d\nmic %.2f\n%s\n%s" % [S["steps"], S["places"].size(), S["faces"], (cam_facing if cam_on else "off"), int(m_tilt), S["shows"], mic_lvl, diag_text, cam_diag]
+		stats_l.text = "steps %d  places %d  faces %d\ncamera %s  tilt %d  shown %d\nmic %.2f\n%s\n%s" % [S["steps"], S["places"].size(), S["faces"], (cam_facing if cam_on else "off"), int(m_tilt), S["shows"], mic_lvl, diag_text + " lux %d batt %d%s" % [int(lux), batt, "+" if charging else ""], cam_diag]
 		diag_t += 0.25
 		if diag_t > 2.0 and svc_cls != null and OS.has_feature("android"):
 			diag_t = 0.0
@@ -2495,6 +2538,200 @@ func new_egg() -> void:
 	save_state()
 
 
+# ---------------------------------------------------------- sensor play
+func ball_on() -> bool:
+	return S["stage"] != "egg" and S["sens"].get("motion", true)
+
+
+func ball_active() -> bool:
+	return ball_on() and (absf(ball_v) > 6.0 or t - ball_play < 2.5)
+
+
+func play_update(dt: float) -> void:
+	# tilt ball
+	if ball_on():
+		var a := Input.get_accelerometer()
+		if a != Vector3.ZERO:
+			var tl: float = a.x * (1.0 if tilt_flip else -1.0)
+			if absf(tl) > 1.2:
+				ball_v += tl * 14.0 * dt
+		ball_v = clampf(ball_v * (1.0 - 1.4 * dt), -60.0, 60.0)
+		ball_x += ball_v * dt
+		if ball_x < 12.0:
+			ball_x = 12.0
+			ball_v = absf(ball_v) * 0.5
+		elif ball_x > 96.0:
+			ball_x = 96.0
+			ball_v = -absf(ball_v) * 0.5
+	# wind from blowing
+	wind = maxf(0.0, wind - dt * 0.6)
+	# weather
+	wx_t += dt
+	if wx_t > 1800.0:
+		wx_t = 0.0
+		fetch_weather()
+	# power and light
+	power_t += dt
+	if power_t > 5.0:
+		power_t = 0.0
+		poll_power_light()
+	if dark and lux > 20.0:
+		dark = false
+		dark_t = 0.0
+		if not is_night():
+			toast("Light again.")
+
+
+func poll_power_light() -> void:
+	if not OS.has_feature("android") or not Engine.has_singleton("AndroidRuntime"):
+		return
+	if play_cls == null:
+		play_cls = JavaClassWrapper.wrap("com.pierrejoshua.digivi.Native")
+	if play_cls == null:
+		return
+	var act = Engine.get_singleton("AndroidRuntime").getActivity()
+	if not light_started:
+		light_started = true
+		play_cls.startLight(act)
+	lux = float(play_cls.lux())
+	if lux >= 0.0 and lux < 6.0 and S["stage"] != "egg":
+		dark_t += 5.0
+		if dark_t >= 20.0 and not dark:
+			dark = true
+	elif lux >= 6.0:
+		dark_t = 0.0
+	var pw := str(play_cls.power(act))
+	if pw != "":
+		var p := pw.split(",")
+		batt = int(p[0])
+		var now_ch := p[1] == "1"
+		if now_ch and not charging and S["stage"] != "egg":
+			spawn_food()
+			need("ene", 4)
+			toast("Ooh, a snack from the charger.")
+		charging = now_ch
+
+
+func fetch_weather() -> void:
+	if not geo_on or geo_cls == null or not OS.has_feature("android"):
+		return
+	var fix := str(geo_cls.lastFix())
+	var p := fix.split(",")
+	if p.size() < 3:
+		wx_t = 1700.0
+		return
+	if wx_http == null:
+		wx_http = HTTPRequest.new()
+		add_child(wx_http)
+		wx_http.request_completed.connect(on_weather)
+	var url := "https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&current=weather_code" % [p[0], p[1]]
+	wx_http.request(url)
+
+
+func on_weather(_r: int, code: int, _h: PackedStringArray, body: PackedByteArray) -> void:
+	if code != 200:
+		wx_t = 1500.0
+		return
+	var j = JSON.parse_string(body.get_string_from_utf8())
+	if typeof(j) != TYPE_DICTIONARY or not j.has("current"):
+		return
+	var c := int(j["current"].get("weather_code", 0))
+	var k := "clear"
+	if c >= 95:
+		k = "storm"
+	elif (c >= 71 and c <= 77) or c == 85 or c == 86:
+		k = "snow"
+	elif (c >= 51 and c <= 67) or (c >= 80 and c <= 82):
+		k = "rain"
+	elif c == 45 or c == 48:
+		k = "fog"
+	wx_kind = k
+	announce_weather()
+
+
+func announce_weather() -> void:
+	var k := weather_kind()
+	if k == wx_told:
+		return
+	wx_told = k
+	var msgs := {"rain": "It is raining where you are.", "snow": "It is snowing where you are.", "storm": "There is a storm out there.", "fog": "It is foggy out there."}
+	if msgs.has(k):
+		toast(msgs[k])
+
+
+func weather_kind() -> String:
+	return wx_override if wx_override != "" else wx_kind
+
+
+func cycle_weather() -> void:
+	var order := ["", "rain", "snow", "storm", "fog"]
+	wx_override = order[(order.find(wx_override) + 1) % order.size()]
+	announce_weather()
+	toast("Weather: " + (wx_override if wx_override != "" else "real"))
+
+
+func draw_ball() -> void:
+	if not ball_on():
+		return
+	var by := GROUND + 2.0
+	ell(ball_x, by + 2, 3, 1, Color(0, 0, 0, 0.25))
+	disc(ball_x, by - 1, 3, INK)
+	disc(ball_x, by - 1, 2, Color("#ff8fb8"))
+	var ang := ball_x * 0.5
+	px(ball_x + cos(ang) * 1.5, by - 1 + sin(ang) * 1.5, Color.WHITE)
+
+
+func draw_windmill() -> void:
+	var y0 := 110.0 + sin(t * 0.6) * 2.0
+	rect(11, y0 - 9, 2, 9, Color("#e9e0ff"))
+	ball_spin += wind * 0.35 + 0.02
+	for k in 4:
+		var a := ball_spin + k * PI / 2.0
+		for r in range(1, 6):
+			px(12 + cos(a) * r, y0 - 10 + sin(a) * r, Color("#ff9ad9") if r > 2 else Color.WHITE)
+	disc(12, y0 - 10, 1, Color("#ffe28a"))
+
+
+var ball_spin := 0.0
+
+
+func draw_weather() -> void:
+	var k := weather_kind()
+	if k == "clear":
+		return
+	if k == "fog":
+		ga = 0.28
+		rect(0, 0, W, H, Color("#e8ecf5"))
+		ga = 1.0
+		return
+	var heavy := 2 if k == "storm" else 1
+	var n := 36 * heavy
+	for i in n:
+		var sx := fposmod(i * 37.0 + sin(i) * 9.0 + (t * 8.0 if k == "snow" else t * 14.0), W)
+		var sp := 16.0 if k == "snow" else 90.0
+		var sy := fposmod(i * 53.0 + t * sp, H)
+		if k == "snow":
+			ga = 0.9
+			px(sx + sin(t + i) * 2.0, sy, Color.WHITE)
+		else:
+			ga = 0.55
+			px(sx, sy, Color("#bfe0ff"))
+			px(sx - 1, sy - 2, Color("#bfe0ff"))
+	ga = 1.0
+	if k == "storm" and fmod(t, 7.0) < 0.12:
+		ga = 0.35
+		rect(0, 0, W, H, Color.WHITE)
+		ga = 1.0
+	if has_bbox and S["stage"] != "egg" and not is_sleeping() and not idle:
+		var cx := roundf(pet_x)
+		var y := roundf(bbox.position.y) - 6.0
+		var uc := Color("#ff7a9a")
+		rect(cx - 4, y, 9, 1, uc)
+		rect(cx - 6, y + 1, 13, 1, uc)
+		rect(cx - 7, y + 2, 15, 1, mixc(uc, Color.WHITE, 0.25))
+		rect(cx, y + 3, 1, 6, Color("#f4ecff"))
+
+
 # ------------------------------------------------------------------ loop
 func tick_1s() -> void:
 	if nap > 0.0:
@@ -2527,6 +2764,17 @@ func update_pet(dt: float) -> void:
 		pet_tx = 54.0
 		act = "watch"
 		look_x = 0.0
+	elif ball_active() and not busy:
+		act = "ball"
+		pet_tx = ball_x
+		if absf(pet_x - ball_x) < 5.0 and t - ball_play > 1.5:
+			ball_play = t
+			ball_v = (1.0 if ball_x >= pet_x else -1.0) * 34.0
+			happy = 1.2
+			need("cur", 1.0)
+			S["xp"]["exp"] += 0.3
+			add_part("heart", pet_x + rnd(-6, 6), GROUND - 20, rnd(-3, 3), -14, 1.0)
+			chirp()
 	elif not busy:
 		act_t -= dt
 		var landed = null
@@ -2555,7 +2803,7 @@ func update_pet(dt: float) -> void:
 				pet_tx = rnd(22, 86)
 			else:
 				act = "rest"
-	var speed := (16.0 if act == "food" else 10.0) * (0.6 if S.get("form", "") == "slp" else 1.0)
+	var speed := (16.0 if act == "food" else (20.0 if act == "ball" else 10.0)) * (0.6 if S.get("form", "") == "slp" else 1.0)
 	if act != "rest":
 		var dx := pet_tx - pet_x
 		if absf(dx) > 1.0:
@@ -2660,6 +2908,7 @@ func _process(dt: float) -> void:
 		vf_ok = false
 	bg_poll(dt)
 	perm_poll(dt)
+	play_update(dt)
 	upd_poll(dt)
 	svc_t += dt
 	if svc_t > 1.0:
@@ -2726,6 +2975,7 @@ func _draw() -> void:
 		add_part("z", pet_x + 8, GROUND - 24, 4, -8, 1.8)
 	draw_viewfinder()
 	draw_parts()
+	draw_weather()
 	draw_bubble()
 
 
@@ -2883,6 +3133,8 @@ func build_ui() -> void:
 		["Hour +3", func(): dbg_hour = fposmod((hour_now() if dbg_hour < 0.0 else dbg_hour) + 3.0, 24.0)],
 		["Real clock", func(): dbg_hour = -1.0],
 		["Make mess", func(): make_mess()],
+		["Weather", func(): cycle_weather()],
+		["Flip tilt", func(): tilt_flip = not tilt_flip],
 		["Sound", func(): mute = not mute],
 		["Reset all", func(): new_egg()],
 	]

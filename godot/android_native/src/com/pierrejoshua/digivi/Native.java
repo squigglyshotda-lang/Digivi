@@ -48,6 +48,37 @@ public class Native {
         }
     }
 
+    private static volatile float luxValue = -1f;
+    private static boolean lightStarted = false;
+
+    /** Starts the ambient light sensor (no permission needed). */
+    public static void startLight(Activity activity) {
+        if (lightStarted) return;
+        try {
+            android.hardware.SensorManager sm = (android.hardware.SensorManager) activity.getSystemService("sensor");
+            android.hardware.Sensor s = sm.getDefaultSensor(android.hardware.Sensor.TYPE_LIGHT);
+            if (s == null) return;
+            sm.registerListener(new android.hardware.SensorEventListener() {
+                @Override public void onSensorChanged(android.hardware.SensorEvent e) { luxValue = e.values[0]; }
+                @Override public void onAccuracyChanged(android.hardware.Sensor sensor, int a) {}
+            }, s, android.hardware.SensorManager.SENSOR_DELAY_NORMAL);
+            lightStarted = true;
+        } catch (Throwable t) { }
+    }
+
+    /** Latest light level in lux, or -1 if unknown. */
+    public static float lux() { return luxValue; }
+
+    /** "percent,charging" e.g. "80,1", or "" if unknown. */
+    public static String power(Activity activity) {
+        try {
+            android.content.Intent i = activity.registerReceiver(null, new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED));
+            if (i == null) return "";
+            int level = i.getIntExtra("level", -1), scale = i.getIntExtra("scale", 100), plugged = i.getIntExtra("plugged", 0);
+            return (level * 100 / Math.max(1, scale)) + "," + (plugged != 0 ? 1 : 0);
+        } catch (Throwable t) { return ""; }
+    }
+
     /** "lat,lon,accuracy" or "" if there is no fix yet. */
     public static String lastFix() { return lastFix; }
 
