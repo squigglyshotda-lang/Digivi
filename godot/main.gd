@@ -1665,7 +1665,7 @@ var cam_diag := ""
 func cam_flat_check(im: Image, step: float) -> bool:
 	var tiny := im.duplicate()
 	tiny.resize(12, 12, Image.INTERPOLATE_NEAREST)
-	var d := tiny.get_data()
+	var d: PackedByteArray = tiny.get_data()
 	var n := 144
 	var sr := 0.0
 	var sg := 0.0

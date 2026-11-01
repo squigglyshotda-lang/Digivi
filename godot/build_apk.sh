@@ -5,6 +5,7 @@ cd "$(dirname "$0")"
 SDK=${ANDROID_HOME:-/opt/android}
 BT=$SDK/build-tools/34.0.0; BT35=$SDK/build-tools/35.0.1
 JAR=$SDK/platforms/android-35/android.jar
+if godot --headless --path . --quit-after 5 2>&1 | grep -q "Parse Error\|Failed to load script"; then echo "SCRIPT ERROR: fix main.gd first"; exit 1; fi
 KS=signing/debug.keystore; [ -f $KS ] || { mkdir -p signing; cp /opt/gd/debug.keystore $KS; }
 OUT=build; rm -rf $OUT/native; mkdir -p $OUT/native/classes $OUT/native/dex
 javac -g:none -source 8 -target 8 -bootclasspath $JAR -d $OUT/native/classes $(find android_native/src -name '*.java') 2>&1 | grep -v "warning" || true
